@@ -1,0 +1,119 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+
+\title{The Classical Heat Equation, Heat Semigroup, and Comparison with the Dunkl Heat Equation}
+\author{Grok 3, xAI}
+\date{April 07, 2025}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+The heat equation is a fundamental partial differential equation (PDE) in mathematical physics, describing the distribution of heat (or temperature) in a given region over time. In this document, we explore the classical heat equation and its associated semigroup in Euclidean space, and then compare it with the Dunkl heat equation, which arises in the context of Dunkl operators and reflection groups. We also discuss the roles of the Fourier transform and the Dunkl transform in solving these equations.
+
+\section{The Classical Heat Equation}
+The classical heat equation in $\mathbb{R}^n$ is given by:
+\begin{equation}
+\frac{\partial u}{\partial t}(x,t) = \Delta u(x,t),
+\end{equation}
+where $u(x,t)$ represents the temperature at position $x \in \mathbb{R}^n$ and time $t > 0$, and $\Delta = \sum_{i=1}^n \frac{\partial^2}{\partial x_i^2}$ is the Laplacian operator. The initial condition is typically specified as:
+\begin{equation}
+u(x,0) = f(x),
+\end{equation}
+where $f(x)$ is a given initial temperature distribution.
+
+\subsection{The Heat Semigroup}
+The solution to the classical heat equation can be expressed using the heat semigroup. Define the heat kernel (or fundamental solution) as:
+\begin{equation}
+p_t(x) = \frac{1}{(4\pi t)^{n/2}} e^{-\frac{|x|^2}{4t}}, \quad t > 0,
+\end{equation}
+where $|x|^2 = x_1^2 + \cdots + x_n^2$. The solution to the initial value problem is then given by convolution with the heat kernel:
+\begin{equation}
+u(x,t) = (P_t f)(x) = \int_{\mathbb{R}^n} p_t(x-y) f(y) \, dy,
+\end{equation}
+assuming $f$ is sufficiently regular (e.g., bounded and continuous). The family of operators $\{P_t\}_{t \geq 0}$ forms a semigroup, satisfying:
+\begin{itemize}
+    \item $P_0 = I$ (the identity operator),
+    \item $P_{t+s} = P_t P_s$ for all $t, s \geq 0$ (semigroup property),
+    \item $\lim_{t \to 0^+} P_t f = f$ in an appropriate sense (strong continuity).
+\end{itemize}
+The heat semigroup is a powerful tool for studying the smoothing properties of the heat equation, as it transforms irregular initial data into smooth functions for $t > 0$.
+
+\subsection{The Fourier Transform}
+The Fourier transform provides an alternative approach to solving the heat equation. For a function $f \in L^1(\mathbb{R}^n)$, the Fourier transform is defined as:
+\begin{equation}
+\hat{f}(\xi) = \int_{\mathbb{R}^n} f(x) e^{-i \langle x, \xi \rangle} \, dx,
+\end{equation}
+where $\langle x, \xi \rangle = x_1 \xi_1 + \cdots + x_n \xi_n$. Applying the Fourier transform to the heat equation, we obtain:
+\begin{equation}
+\frac{\partial \hat{u}}{\partial t}(\xi,t) = -|\xi|^2 \hat{u}(\xi,t),
+\end{equation}
+with initial condition $\hat{u}(\xi,0) = \hat{f}(\xi)$. Solving this ordinary differential equation yields:
+\begin{equation}
+\hat{u}(\xi,t) = e^{-t |\xi|^2} \hat{f}(\xi).
+\end{equation}
+The solution in the spatial domain is then recovered via the inverse Fourier transform:
+\begin{equation}
+u(x,t) = \frac{1}{(2\pi)^n} \int_{\mathbb{R}^n} e^{i \langle x, \xi \rangle} e^{-t |\xi|^2} \hat{f}(\xi) \, d\xi,
+\end{equation}
+which is consistent with the convolution formula using the heat kernel, since $e^{-t |\xi|^2}$ is the Fourier transform of $p_t(x)$.
+
+\section{The Dunkl Heat Equation}
+The Dunkl heat equation generalizes the classical case by incorporating Dunkl operators, which are differential-difference operators associated with a root system and a multiplicity function. Let $R \subset \mathbb{R}^n$ be a root system, $W$ its associated reflection group, and $k: R \to [0,\infty)$ a multiplicity function invariant under $W$. The Dunkl operators are defined for $\xi \in \mathbb{R}^n$ as:
+\begin{equation}
+T_\xi f(x) = \partial_\xi f(x) + \sum_{\alpha \in R_+} k(\alpha) \langle \alpha, \xi \rangle \frac{f(x) - f(\sigma_\alpha x)}{\langle \alpha, x \rangle},
+\end{equation}
+where $\partial_\xi$ is the directional derivative, $R_+$ is a positive subsystem, and $\sigma_\alpha$ is the reflection across the hyperplane $\langle \alpha, x \rangle = 0$.
+
+The Dunkl Laplacian is given by:
+\begin{equation}
+\Delta_k = \sum_{i=1}^n T_{e_i}^2,
+\end{equation}
+where $\{e_i\}$ is the standard basis of $\mathbb{R}^n$. The Dunkl heat equation is then:
+\begin{equation}
+\frac{\partial u}{\partial t}(x,t) = \Delta_k u(x,t),
+\end{equation}
+with initial condition $u(x,0) = f(x)$.
+
+\subsection{The Dunkl Heat Semigroup}
+Analogous to the classical case, the Dunkl heat equation has a semigroup solution. The Dunkl heat kernel $E_k(x,y,t)$ is defined with respect to the weight function $w_k(x) = \prod_{\alpha \in R_+} |\langle \alpha, x \rangle|^{2k(\alpha)}$. For $t > 0$, the solution is:
+\begin{equation}
+u(x,t) = (P_t^k f)(x) = \int_{\mathbb{R}^n} E_k(x,y,t) f(y) w_k(y) \, dy,
+\end{equation}
+where $E_k(x,y,t)$ is explicitly given by:
+\begin{equation}
+E_k(x,y,t) = \frac{c_k}{t^{\gamma + n/2}} e^{-\frac{|x|^2 + |y|^2}{4t}} E_k\left(\frac{x}{\sqrt{2t}}, \frac{y}{\sqrt{2t}}\right),
+\end{equation}
+with $\gamma = \sum_{\alpha \in R_+} k(\alpha)$, $c_k$ a normalization constant, and $E_k(x,y)$ the Dunkl kernel (generalized exponential). The operators $\{P_t^k\}_{t \geq 0}$ form a semigroup with properties similar to the classical case, but adapted to the weighted measure $w_k(x) dx$.
+
+\subsection{The Dunkl Transform}
+The Dunkl transform generalizes the Fourier transform and is defined as:
+\begin{equation}
+\mathcal{F}_k f(\xi) = \int_{\mathbb{R}^n} f(x) E_k(-i \xi, x) w_k(x) \, dx,
+\end{equation}
+where $E_k(\xi, x)$ is the Dunkl kernel, satisfying $T_\xi E_k(\cdot, x) = \langle \xi, x \rangle E_k(\cdot, x)$. Applying $\mathcal{F}_k$ to the Dunkl heat equation yields:
+\begin{equation}
+\frac{\partial \mathcal{F}_k u}{\partial t}(\xi,t) = -|\xi|^2 \mathcal{F}_k u(\xi,t),
+\end{equation}
+with solution:
+\begin{equation}
+\mathcal{F}_k u(\xi,t) = e^{-t |\xi|^2} \mathcal{F}_k f(\xi).
+\end{equation}
+The spatial solution is recovered via the inverse Dunkl transform, mirroring the classical Fourier approach but in the Dunkl context.
+
+\section{Comparison}
+The classical and Dunkl heat equations share structural similarities but differ significantly due to the presence of reflection symmetry and the multiplicity parameter $k$:
+\begin{itemize}
+    \item \textbf{Operator}: The classical Laplacian $\Delta$ is purely differential, while $\Delta_k$ includes difference terms, reflecting the symmetry of $W$.
+    \item \textbf{Kernel}: The classical heat kernel $p_t(x)$ is Gaussian, whereas $E_k(x,y,t)$ involves the Dunkl kernel and a weight $w_k$, complicating its form.
+    \item \textbf{Transform}: The Fourier transform is replaced by the Dunkl transform, which incorporates $W$-invariance and the weight $w_k$.
+    \item \textbf{Applications}: The classical case applies to isotropic diffusion, while the Dunkl case models processes with symmetries, such as in harmonic analysis on symmetric spaces.
+\end{itemize}
+When $k = 0$, the Dunkl operators reduce to partial derivatives, and the Dunkl heat equation collapses to the classical one, highlighting their deep connection.
+
+\section{Conclusion}
+The classical heat equation and its semigroup provide a cornerstone of PDE theory, elegantly solved via the Fourier transform. The Dunkl heat equation extends this framework to a setting with reflection symmetries, leveraging the Dunkl transform and operators. Both cases illustrate the interplay between analysis, geometry, and symmetry in understanding diffusion processes.
+
+\end{document}
