@@ -1,0 +1,80 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath, amssymb}
+\usepackage{geometry}
+\usepackage{authblk}
+\usepackage{setspace}
+\usepackage{cite}
+
+\geometry{margin=1in}
+\setstretch{1.2}
+
+\title{\textbf{A Brief Overview of Core Equations in General Relativity}}
+\author[1]{Author Name}
+\affil[1]{\small Department of Theoretical Physics, University of Spacetime Geometry}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+General Relativity, formulated by Einstein in 1915, provides a geometric description of gravitation as curvature in spacetime. This brief note presents several foundational equations central to the theory, including the Einstein field equations, geodesic motion, and key metric and energy-momentum formulations.
+\end{abstract}
+
+\section{Einstein Field Equations}
+
+The Einstein field equations relate spacetime curvature to energy and momentum:
+
+\begin{equation}
+R_{\mu \nu} - \frac{1}{2} R g_{\mu \nu} + \Lambda g_{\mu \nu} = \frac{8 \pi G}{c^4} T_{\mu \nu}
+\end{equation}
+
+Here, \( R_{\mu \nu} \) is the Ricci curvature tensor, \( R \) the Ricci scalar, \( g_{\mu \nu} \) the metric tensor, \( \Lambda \) the cosmological constant, \( G \) Newton’s gravitational constant, \( c \) the speed of light, and \( T_{\mu \nu} \) the stress-energy tensor.
+
+\section{Geodesic Motion}
+
+Test particles move along geodesics, which are determined by the Levi-Civita connection:
+
+\begin{equation}
+\frac{d^2 x^\mu}{d \tau^2} + \Gamma^\mu_{\nu \lambda} \frac{d x^\nu}{d \tau} \frac{d x^\lambda}{d \tau} = 0
+\end{equation}
+
+This equation describes the curved paths followed in spacetime, governed by the Christoffel symbols \( \Gamma^\mu_{\nu \lambda} \).
+
+\section{Schwarzschild Metric}
+
+For spherically symmetric, non-rotating masses, the Schwarzschild solution is given by:
+
+\begin{equation}
+ds^2 = -\left(1 - \frac{2GM}{r c^2} \right)c^2 dt^2 + \left(1 - \frac{2GM}{r c^2} \right)^{-1} dr^2 + r^2 d\Omega^2
+\end{equation}
+
+This metric describes the spacetime outside a spherical mass \( M \) and is fundamental in understanding black holes.
+
+\section{Perfect Fluid Energy-Momentum Tensor}
+
+In many cosmological models, matter is modeled as a perfect fluid. Its energy-momentum tensor is:
+
+\begin{equation}
+T^{\mu \nu} = (\rho + p) u^\mu u^\nu + p g^{\mu \nu}
+\end{equation}
+
+Here, \( \rho \) is the energy density, \( p \) the pressure, and \( u^\mu \) the 4-velocity of the fluid.
+
+\section{Conclusion}
+
+These equations represent the mathematical backbone of general relativity. Together, they illustrate the theory’s power in connecting spacetime geometry with the distribution of matter and energy.
+
+\bibliographystyle{plain}
+\begin{thebibliography}{9}
+\bibitem{einstein1915}
+  A. Einstein,
+  \textit{Die Feldgleichungen der Gravitation},
+  Preussische Akademie der Wissenschaften, 1915.
+\bibitem{wald1984}
+  R. M. Wald,
+  \textit{General Relativity},
+  University of Chicago Press, 1984.
+\end{thebibliography}
+
+\end{document}

@@ -2,16 +2,40 @@
 import subprocess
 import shutil
 
-# Directory containing .tex or .txt files
+# Directory containing .tex and .txt files
 folder = r"C:\Users\BERKANIMO\Desktop\Autolatex"
 os.makedirs(folder, exist_ok=True)
 
+def has_latex_preamble(filepath):
+    """Check if a file contains LaTeX preamble keywords."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+            return '\\documentclass' in content and '\\begin{document}' in content
+    except Exception as e:
+        print(f"⚠️ Could not read {filepath}: {e}")
+        return False
+
 def compile_latex_file(filename):
-    """Compile a .tex or .txt file to PDF using pdflatex."""
-    if not filename.lower().endswith((".tex", ".txt")):
+    """Compile LaTeX from .tex or valid .txt file."""
+    if not filename.lower().endswith(('.tex', '.txt')):
         return
 
     input_path = os.path.join(folder, filename)
+
+    # Skip .txt files without LaTeX preamble
+    if filename.lower().endswith('.txt') and not has_latex_preamble(input_path):
+        print(f"⏩ Skipping {filename} (no LaTeX preamble detected)")
+        return
+
+    # Rename .txt to .tex temporarily for compilation
+    original_path = input_path
+    if filename.lower().endswith('.txt'):
+        tex_name = filename.replace('.txt', '.tex')
+        input_path = os.path.join(folder, tex_name)
+        os.rename(original_path, input_path)
+        filename = tex_name
+
     output_pdf = os.path.join(folder, os.path.splitext(filename)[0] + ".pdf")
 
     print("="*50)
@@ -19,7 +43,6 @@ def compile_latex_file(filename):
     print(f"Full path: {input_path}")
     print("="*50)
 
-    # Check if file exists
     if not os.path.exists(input_path):
         print(f"❌ File not found: {input_path}")
         return
@@ -52,24 +75,18 @@ def compile_latex_file(filename):
         print("Please install TeX Live or MiKTeX and add pdflatex to PATH")
 
 def process_files():
-    """Process all .tex and .txt files in the directory."""
+    """Process all .tex and valid .txt files in the directory."""
     if not shutil.which("pdflatex"):
         print("❌ 'pdflatex' is not installed or not in the system PATH.")
-        print("Please install TeX Live or MiKTeX and add pdflatex to PATH.")
         return
 
-    # Include both .tex and .txt files
-    tex_files = [
-        f for f in os.listdir(folder)
-        if f.lower().endswith((".tex", ".txt"))
-    ]
-
-    if not tex_files:
+    files = [f for f in os.listdir(folder) if f.lower().endswith(('.tex', '.txt'))]
+    if not files:
         print(f"⚠️ No .tex or .txt files found in {folder}")
         return
 
-    print(f"Found {len(tex_files)} LaTeX file(s): {tex_files}")
-    for filename in tex_files:
+    print(f"Found {len(files)} file(s): {files}")
+    for filename in files:
         compile_latex_file(filename)
 
 def cleanup_auxiliary_files():
@@ -88,4 +105,3 @@ if __name__ == "__main__":
     print("Cleaning up auxiliary files...")
     cleanup_auxiliary_files()
     print("Process complete!")
-
