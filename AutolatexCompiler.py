@@ -8,9 +8,12 @@ st.set_page_config(page_title="AutoLaTeX Compiler", layout="centered")
 quicklatex_url = "https://quicklatex.com/latex3.php"
 
 def compile_latex_file(latex_code):
+    """
+    Compiles LaTeX code remotely via the QuickLaTeX API.
+    """
     data = {
         'formula': latex_code,  # The LaTeX code to compile
-        'output': 'pdf',        # The output format: pdf or png
+        'output': 'pdf',        # The output format: pdf
         'latex': 'yes',         # We are submitting LaTeX content
         'image': 'yes'          # Optional: if you want image output instead
     }
