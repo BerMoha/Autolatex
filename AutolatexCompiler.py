@@ -1,40 +1,31 @@
 import streamlit as st
 import requests
-from pathlib import Path
+from io import BytesIO
 
 # === CONFIGURATION ===
-folder = Path(r"C:\Users\BERKANIMO\Desktop\Autolatex")  # Update folder if needed
-folder.mkdir(parents=True, exist_ok=True)
-
 st.set_page_config(page_title="AutoLaTeX Compiler", layout="centered")
 
-def has_latex_preamble(filepath):
-    """Check if the LaTeX file contains the LaTeX preamble."""
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-            return '\\documentclass' in content and '\\begin{document}' in content
-    except Exception as e:
-        st.warning(f"Could not read {filepath}: {e}")
-        return False
+# Function to check if LaTeX content has the preamble
+def has_latex_preamble(latex_content):
+    return '\\documentclass' in latex_content and '\\begin{document}' in latex_content
 
+# Function to send LaTeX content to QuickLaTeX API for compilation
 def compile_latex_online(latex_content):
-    """Send LaTeX content to QuickLaTeX API for online compilation."""
     url = "https://quicklatex.com/latex3.f"
-    headers = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-    }
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
     data = {
-        'formula': latex_content,
-        'fsize': '12',
-        'fcolor': '000000',
-        'bg': 'FFFFFF',
+        'formula': latex_content, 
+        'fsize': '12', 
+        'fcolor': '000000', 
+        'bg': 'FFFFFF', 
         'mode': '0'
     }
+    
     try:
+        # Send POST request to QuickLaTeX
         response = requests.post(url, headers=headers, data=data)
         if response.status_code == 200:
-            return response.content  # PDF content
+            return response.content  # PDF content in bytes
         else:
             st.error("❌ LaTeX compilation failed!")
             return None
@@ -42,43 +33,30 @@ def compile_latex_online(latex_content):
         st.error(f"❌ Error during API request: {e}")
         return None
 
-def cleanup_auxiliary_files():
-    """Remove auxiliary files generated during LaTeX compilation."""
-    for ext in ['.aux', '.log', '.out', '.toc']:
-        for file in folder.glob(f"*{ext}"):
-            file.unlink(missing_ok=True)
-
-# === INTERFACE STREAMLIT ===
+# === STREAMLIT INTERFACE ===
 
 st.title("📄 AutoLaTeX Compiler")
 
-st.markdown("Uploader un fichier `.tex` ou `.txt` contenant une structure LaTeX complète pour le compiler.")
+st.markdown("Upload a `.tex` or `.txt` file containing a complete LaTeX structure to compile.")
 
-uploaded_file = st.file_uploader("Choisir un fichier LaTeX", type=["tex", "txt"])
+# Upload LaTeX file
+uploaded_file = st.file_uploader("Choose a LaTeX file", type=["tex", "txt"])
 
 if uploaded_file is not None:
-    temp_path = folder / uploaded_file.name
-    with open(temp_path, 'wb') as f:
-        f.write(uploaded_file.read())
-    st.success(f"✅ Fichier enregistré : {uploaded_file.name}")
+    # Read uploaded file content
+    latex_content = uploaded_file.read().decode('utf-8')
 
-    if st.button("🚀 Compiler le fichier"):
-        # Read the content of the LaTeX file
-        with open(temp_path, 'r', encoding='utf-8') as f:
-            latex_content = f.read()
-
-        # Check if the LaTeX file has a valid preamble
-        if not has_latex_preamble(temp_path):
-            st.warning("❌ Le fichier ne contient pas de préambule LaTeX valide. Compilation annulée.")
-        else:
-            # Send LaTeX content to QuickLaTeX API for compilation
+    # Check for LaTeX preamble
+    if not has_latex_preamble(latex_content):
+        st.warning("⚠️ The file does not contain a valid LaTeX preamble. Please ensure it contains `\\documentclass` and `\\begin{document}`.")
+    else:
+        # Button to trigger LaTeX compilation
+        if st.button("🚀 Compile the file"):
+            # Send content to QuickLaTeX API for compilation
             pdf_content = compile_latex_online(latex_content)
             if pdf_content:
-                # Provide the compiled PDF for download
-                st.success(f"✅ PDF généré pour {uploaded_file.name}")
-                st.download_button("⬇️ Télécharger le PDF", pdf_content, file_name=f"{uploaded_file.name}.pdf")
+                st.success(f"✅ PDF generated successfully!")
+                st.download_button("⬇️ Download PDF", pdf_content, file_name="compiled_output.pdf")
+                st.components.v1.iframe(pdf_content, height=600)
             else:
-                st.error("❌ La compilation a échoué.")
-
-        cleanup_auxiliary_files()
-
+                st.error("❌ Failed to compile the LaTeX document.")
