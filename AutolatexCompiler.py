@@ -1,29 +1,22 @@
 import streamlit as st
 import requests
-from io import BytesIO
 
 # === CONFIGURATION ===
 st.set_page_config(page_title="AutoLaTeX Compiler", layout="centered")
 
-# Papeeria API URL and your API Key
-API_URL = "https://api.papeeria.com/v1/latex"
-API_KEY = "your_api_key_here"  # Replace with your API Key
+# QuickLaTeX API URL
+API_URL = "https://quicklatex.com/latex3.qpl"
 
-# Function to check if LaTeX content has the preamble
-def has_latex_preamble(latex_content):
-    return '\\documentclass' in latex_content and '\\begin{document}' in latex_content
-
-# Function to send LaTeX content to Papeeria API for compilation
+# Function to compile LaTeX online
 def compile_latex_online(latex_content):
-    headers = {'Authorization': f'Bearer {API_KEY}'}
     data = {
-        'latex': latex_content,
-        'output': 'pdf',
+        'formula': latex_content,
+        'output': 'pdf'
     }
 
     try:
-        # Send POST request to Papeeria API
-        response = requests.post(API_URL, headers=headers, data=data)
+        # Send POST request to QuickLaTeX API
+        response = requests.post(API_URL, data=data)
         if response.status_code == 200:
             return response.content  # PDF content in bytes
         else:
@@ -47,12 +40,12 @@ if uploaded_file is not None:
     latex_content = uploaded_file.read().decode('utf-8')
 
     # Check for LaTeX preamble
-    if not has_latex_preamble(latex_content):
+    if '\\documentclass' not in latex_content or '\\begin{document}' not in latex_content:
         st.warning("⚠️ The file does not contain a valid LaTeX preamble. Please ensure it contains `\\documentclass` and `\\begin{document}`.")
     else:
         # Button to trigger LaTeX compilation
         if st.button("🚀 Compile the file"):
-            # Send content to Papeeria API for compilation
+            # Send content to QuickLaTeX API for compilation
             pdf_content = compile_latex_online(latex_content)
             if pdf_content:
                 st.success(f"✅ PDF generated successfully!")
