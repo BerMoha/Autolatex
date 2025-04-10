@@ -1,9 +1,8 @@
 ﻿
 
 import streamlit as st
-import os
-import subprocess
-import shutil
+import requests
+from io import BytesIO
 from pathlib import Path
 
 # === CONFIGURATION ===
@@ -13,6 +12,7 @@ folder.mkdir(parents=True, exist_ok=True)
 st.set_page_config(page_title="AutoLaTeX Compiler", layout="centered")
 
 def has_latex_preamble(filepath):
+    """Check if the LaTeX file contains the LaTeX preamble."""
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -21,43 +21,32 @@ def has_latex_preamble(filepath):
         st.warning(f"Could not read {filepath}: {e}")
         return False
 
-def compile_latex_file(filepath: Path) -> Path | None:
-    filename = filepath.name
-
-    if filename.lower().endswith('.txt') and not has_latex_preamble(filepath):
+def compile_latex_online(latex_content):
+    """Send LaTeX content to QuickLaTeX API for online compilation."""
+    url = "https://quicklatex.com/latex3.f"
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+    }
+    data = {
+        'formula': latex_content,
+        'fsize': '12',
+        'fcolor': '000000',
+        'bg': 'FFFFFF',
+        'mode': '0'
+    }
+    try:
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            return response.content  # PDF content
+        else:
+            st.error("❌ LaTeX compilation failed!")
+            return None
+    except Exception as e:
+        st.error(f"❌ Error during API request: {e}")
         return None
 
-    # Rename .txt to .tex if needed
-    if filename.lower().endswith('.txt'):
-        new_path = filepath.with_suffix('.tex')
-        filepath.rename(new_path)
-        filepath = new_path
-        filename = filepath.name
-
-    output_pdf = filepath.with_suffix('.pdf')
-
-    try:
-        result = subprocess.run(
-            [
-                "pdflatex",
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                f"-output-directory={folder}",
-                str(filepath)
-            ],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        return output_pdf
-    except subprocess.CalledProcessError as e:
-        st.error(f"❌ Compilation failed for {filename}")
-        st.code(e.stderr or e.stdout)
-    except FileNotFoundError:
-        st.error("❌ `pdflatex` not found. Please install MiKTeX or TeX Live and add it to PATH.")
-    return None
-
 def cleanup_auxiliary_files():
+    """Remove auxiliary files generated during LaTeX compilation."""
     for ext in ['.aux', '.log', '.out', '.toc']:
         for file in folder.glob(f"*{ext}"):
             file.unlink(missing_ok=True)
@@ -77,12 +66,21 @@ if uploaded_file is not None:
     st.success(f"✅ Fichier enregistré : {uploaded_file.name}")
 
     if st.button("🚀 Compiler le fichier"):
-        pdf_path = compile_latex_file(temp_path)
-        if pdf_path and pdf_path.exists():
-            st.success(f"✅ PDF généré : {pdf_path.name}")
-            with open(pdf_path, "rb") as f:
-                st.download_button("⬇️ Télécharger le PDF", f, file_name=pdf_path.name)
-            st.components.v1.iframe(str(pdf_path), height=600)
-            cleanup_auxiliary_files()
+        # Read the content of the LaTeX file
+        with open(temp_path, 'r', encoding='utf-8') as f:
+            latex_content = f.read()
+
+        # Check if the LaTeX file has a valid preamble
+        if not has_latex_preamble(temp_path):
+            st.warning("❌ Le fichier ne contient pas de préambule LaTeX valide. Compilation annulée.")
         else:
-            st.error("❌ La compilation a échoué ou le fichier est vide.")
+            # Send LaTeX content to QuickLaTeX API for compilation
+            pdf_content = compile_latex_online(latex_content)
+            if pdf_content:
+                # Provide the compiled PDF for download
+                st.success(f"✅ PDF généré pour {uploaded_file.name}")
+                st.download_button("⬇️ Télécharger le PDF", pdf_content, file_name=f"{uploaded_file.name}.pdf")
+            else:
+                st.error("❌ La compilation a échoué.")
+
+        cleanup_auxiliary_files()
