@@ -1,44 +1,71 @@
 import streamlit as st
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
 import requests
 
-st.set_page_config(page_title="📄 Online LaTeX Compiler", layout="centered")
+# ---------- CONFIGURATION ----------
+st.set_page_config(page_title="📄 Secure Online LaTeX Compiler", layout="centered")
 
-def compile_with_latexonline(latex_content):
-    try:
-        response = requests.post(
-            "https://latexonline.cc/data",
-            files={"file": ("main.tex", latex_content)},
-            data={"compiler": "pdflatex"},
-        )
-        if response.status_code == 200 and response.headers["Content-Type"] == "application/pdf":
-            return response.content
-        else:
-            st.error("⚠️ Compilation failed. Please check your LaTeX code.")
-            return None
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
-        return None
+# ---------- AUTHENTIFICATION ----------
+# Exemple : un seul utilisateur pour commencer (Alice / motdepasse123)
+names = ["Alice"]
+usernames = ["alice"]
+passwords = stauth.Hasher(["motdepasse123"]).generate()  # Hash le mot de passe
 
-st.title("📄 Online LaTeX Compiler")
+authenticator = stauth.Authenticate(
+    names,
+    usernames,
+    passwords,
+    "compiler_app",   # cookie name
+    "abcdef",         # clé secrète pour le cookie
+    cookie_expiry_days=1,
+)
 
-st.markdown("Upload a `.tex` or `.txt` file containing full LaTeX code (`\\documentclass`...) and compile it into a PDF.")
+# Affichage du formulaire de login
+name, authentication_status, username = authenticator.login("Login", "main")
 
-uploaded_file = st.file_uploader("Upload a LaTeX file", type=["tex", "txt"])
+if authentication_status:
+    authenticator.logout("Logout", "sidebar")
+    st.sidebar.success(f"Bienvenue {name} 👋")
 
-if uploaded_file is not None:
-    latex_content = uploaded_file.read().decode("utf-8")
-    st.success(f"✅ File uploaded: {uploaded_file.name}")
-    st.code(latex_content, language="latex")
+    # ---------- INTERFACE DE L'APP ----------
+    st.title("📄 Secure Online LaTeX Compiler")
+    st.markdown("Téléverse un fichier `.tex` ou `.txt` contenant du code LaTeX pour le compiler en PDF.")
 
-    if st.button("🚀 Compile LaTeX"):
-        pdf_data = compile_with_latexonline(latex_content)
-        if pdf_data:
-            st.success("✅ PDF compiled successfully!")
-            st.download_button(
-                label="⬇️ Download PDF",
-                data=pdf_data,
-                file_name="output.pdf",
-                mime="application/pdf"
-            )
+    uploaded_file = st.file_uploader("Upload un fichier LaTeX", type=["tex", "txt"])
+
+    if uploaded_file is not None:
+        latex_content = uploaded_file.read().decode("utf-8")
+        st.success(f"✅ Fichier reçu : {uploaded_file.name}")
+        st.code(latex_content, language="latex")
+
+        if st.button("🚀 Compiler"):
+            with st.spinner("Compilation en cours..."):
+                try:
+                    response = requests.post(
+                        "https://latexonline.cc/data",
+                        files={"file": ("main.tex", latex_content)},
+                        data={"compiler": "pdflatex"},
+                    )
+                    if response.status_code == 200 and response.headers["Content-Type"] == "application/pdf":
+                        st.success("✅ PDF compilé avec succès !")
+                        st.download_button(
+                            label="⬇️ Télécharger le PDF",
+                            data=response.content,
+                            file_name="output.pdf",
+                            mime="application/pdf",
+                        )
+                    else:
+                        st.error("❌ Échec de la compilation. Vérifie ton code LaTeX.")
+                except Exception as e:
+                    st.error(f"❌ Erreur réseau ou serveur : {e}")
+
+elif authentication_status is False:
+    st.error("Nom d'utilisateur ou mot de passe incorrect.")
+
+elif authentication_status is None:
+    st.warning("Veuillez entrer vos identifiants.")
+
 
 
