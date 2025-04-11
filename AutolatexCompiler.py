@@ -1,7 +1,5 @@
 import streamlit as st
 import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
 import requests
 
 # ---------- CONFIGURATION ----------
@@ -11,13 +9,16 @@ st.set_page_config(page_title="📄 Secure Online LaTeX Compiler", layout="cente
 # Exemple : un seul utilisateur pour commencer (Alice / motdepasse123)
 names = ["Alice"]
 usernames = ["alice"]
-passwords = stauth.Hasher(["motdepasse123"]).generate()  # Hash le mot de passe
+passwords = ["motdepasse123"]
+
+# Hachage des mots de passe
+hashed_passwords = stauth.Hasher(passwords).generate()
 
 authenticator = stauth.Authenticate(
     names,
     usernames,
-    passwords,
-    "compiler_app",   # cookie name
+    hashed_passwords,
+    "compiler_app",   # nom du cookie
     "abcdef",         # clé secrète pour le cookie
     cookie_expiry_days=1,
 )
