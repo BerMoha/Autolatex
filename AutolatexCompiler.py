@@ -1,72 +1,162 @@
 import streamlit as st
-import streamlit_authenticator as stauth
+import os
+from pathlib import Path
 import requests
+import base64
 
-# ---------- CONFIGURATION ----------
-st.set_page_config(page_title="📄 Secure Online LaTeX Compiler", layout="centered")
+# Page config
+st.set_page_config(page_title="📝 Online LaTeX Compiler", layout="centered")
 
-# ---------- AUTHENTIFICATION ----------
-# Exemple : un seul utilisateur pour commencer (Alice / motdepasse123)
-names = ["Alice"]
-usernames = ["alice"]
-passwords = ["motdepasse123"]
+# Use Path for temporary storage
+WORKING_DIR = Path("temp_latex")
+WORKING_DIR.mkdir(exist_ok=True)
 
-# Hachage des mots de passe
-hashed_passwords = stauth.Hasher(passwords).generate()
+# Hypothetical backend API endpoint for LaTeX compilation (replace with actual service)
+LATEX_API_URL = "https://api.example.com/compile-latex"  # Placeholder
 
-authenticator = stauth.Authenticate(
-    names,
-    usernames,
-    hashed_passwords,
-    "compiler_app",   # nom du cookie
-    "abcdef",         # clé secrète pour le cookie
-    cookie_expiry_days=1,
+def validate_latex_content(content: str) -> bool:
+    """Check if content contains LaTeX-like structure."""
+    return "\\documentclass" in content or "\\begin{document}" in content
+
+def compile_latex_to_pdf(filename: str, content: str) -> tuple[bytes | None, str]:
+    """Send LaTeX content to a backend API for PDF compilation."""
+    if not validate_latex_content(content):
+        return None, f"⏩ Skipped: {filename} (no valid LaTeX content detected)"
+
+    try:
+        # Send content to backend API
+        response = requests.post(
+            LATEX_API_URL,
+            json={"content": content, "filename": filename},
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("success") and data.get("pdf"):
+            # Decode base64 PDF from response
+            pdf_data = base64.b64decode(data["pdf"])
+            return pdf_data, "Compilation successful"
+        else:
+            return None, f"❌ Compilation failed: {data.get('error', 'Unknown error')}"
+    except requests.Timeout:
+        return None, f"❌ Compilation timed out for {filename}"
+    except requests.RequestException as e:
+        return None, f"❌ Compilation error: {str(e)}"
+
+def cleanup_temp_files() -> None:
+    """Remove temporary files."""
+    for file in WORKING_DIR.iterdir():
+        try:
+            file.unlink()
+        except OSError:
+            pass
+
+# Streamlit UI
+st.title("📝 Online LaTeX Compiler")
+st.markdown(
+    """
+    Upload `.tex` or `.txt` files containing LaTeX code to generate PDFs.
+    Preview your LaTeX in real-time below.
+    """
 )
 
-# Affichage du formulaire de login
-name, authentication_status, username = authenticator.login("Login", "main")
+# KaTeX for live preview (loaded via CDN in HTML)
+st.markdown(
+    """
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <div id="latex-preview"></div>
+    <script>
+        function renderLatex(content) {
+            try {
+                katex.render(content, document.getElementById('latex-preview'), {
+                    throwOnError: false,
+                    displayMode: true
+                });
+            } catch (e) {
+                document.getElementById('latex-preview').innerHTML = 'Preview error: ' + e.message;
+            }
+        }
+    </script>
+    """,
+    unsafe_allow_html=True
+)
 
-if authentication_status:
-    authenticator.logout("Logout", "sidebar")
-    st.sidebar.success(f"Bienvenue {name} 👋")
+# File uploader
+uploaded_files = st.file_uploader(
+    "Drop your files here:",
+    type=["tex", "txt"],
+    accept_multiple_files=True,
+    help="Maximum file size: 10MB"
+)
 
-    # ---------- INTERFACE DE L'APP ----------
-    st.title("📄 Secure Online LaTeX Compiler")
-    st.markdown("Téléverse un fichier `.tex` ou `.txt` contenant du code LaTeX pour le compiler en PDF.")
+if uploaded_files:
+    for file in uploaded_files:
+        if file.size > 10_000_000:  # 10MB limit
+            st.error(f"❌ {file.name} exceeds 10MB limit")
+            continue
+        file_path = WORKING_DIR / file.name
+        file_path.write_bytes(file.getbuffer())
+    st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully.")
 
-    uploaded_file = st.file_uploader("Upload un fichier LaTeX", type=["tex", "txt"])
+# Text area for editing and preview
+st.subheader("Edit LaTeX Code")
+selected_file = st.selectbox(
+    "Select a file to edit or preview:",
+    options=[f.name for f in WORKING_DIR.iterdir()] if any(WORKING_DIR.iterdir()) else ["No files uploaded"]
+)
 
-    if uploaded_file is not None:
-        latex_content = uploaded_file.read().decode("utf-8")
-        st.success(f"✅ Fichier reçu : {uploaded_file.name}")
-        st.code(latex_content, language="latex")
+if selected_file != "No files uploaded":
+    file_path = WORKING_DIR / selected_file
+    with open(file_path, 'r', encoding='utf-8') as f:
+        latex_content = f.read()
+    
+    edited_content = st.text_area(
+        "Edit LaTeX code:",
+        value=latex_content,
+        height=300
+    )
+    
+    # Update file with edited content
+    if edited_content != latex_content:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(edited_content)
+        st.success("✅ File updated with new content.")
+    
+    # Trigger KaTeX preview
+    st.markdown(
+        f"""
+        <script>
+            renderLatex({repr(edited_content)});
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
-        if st.button("🚀 Compiler"):
-            with st.spinner("Compilation en cours..."):
-                try:
-                    response = requests.post(
-                        "https://latexonline.cc/data",
-                        files={"file": ("main.tex", latex_content)},
-                        data={"compiler": "pdflatex"},
+if st.button("📄 Compile LaTeX Files", key="compile_button"):
+    if not any(WORKING_DIR.glob("*.[tT][eE][xX]") or WORKING_DIR.glob("*.[tT][xX][tT]")):
+        st.warning("⚠️ No files to compile.")
+    else:
+        with st.spinner("Compiling files..."):
+            for file in WORKING_DIR.glob("*.[tT][eE][xX]") or WORKING_DIR.glob("*.[tT][xX][tT]"):
+                with open(file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                pdf_data, message = compile_latex_to_pdf(file.name, content)
+                st.subheader(f"📂 {file.name}")
+                
+                if pdf_data:
+                    st.success(f"✅ PDF generated for {file.name}")
+                    st.download_button(
+                        "📥 Download PDF",
+                        pdf_data,
+                        file_name=f"{file.stem}.pdf"
                     )
-                    if response.status_code == 200 and response.headers["Content-Type"] == "application/pdf":
-                        st.success("✅ PDF compilé avec succès !")
-                        st.download_button(
-                            label="⬇️ Télécharger le PDF",
-                            data=response.content,
-                            file_name="output.pdf",
-                            mime="application/pdf",
-                        )
-                    else:
-                        st.error("❌ Échec de la compilation. Vérifie ton code LaTeX.")
-                except Exception as e:
-                    st.error(f"❌ Erreur réseau ou serveur : {e}")
-
-elif authentication_status is False:
-    st.error("Nom d'utilisateur ou mot de passe incorrect.")
-
-elif authentication_status is None:
-    st.warning("Veuillez entrer vos identifiants.")
-
+                else:
+                    st.error(f"❌ Compilation failed: {message}")
+            
+            cleanup_temp_files()
+            st.info("🧹 Cleanup of temporary files completed.")
 
 
