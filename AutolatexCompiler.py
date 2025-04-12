@@ -1,87 +1,99 @@
 import streamlit as st
 import os
-from pathlib import Path
 import requests
-import base64
+from pathlib import Path
+from typing import Tuple, Optional, List
+import time
 
 # Page config
 st.set_page_config(page_title="📝 Online LaTeX Compiler", layout="centered")
 
-# Use Path for temporary storage
-WORKING_DIR = Path("temp_latex")
+# Working directory for temporary files
+WORKING_DIR = Path("compiled_latex")
 WORKING_DIR.mkdir(exist_ok=True)
 
-# Hypothetical backend API endpoint for LaTeX compilation (replace with actual service)
-LATEX_API_URL = "https://api.example.com/compile-latex"  # Placeholder
+def has_latex_preamble(filepath: Path) -> bool:
+    """
+    Check if file contains LaTeX preamble.
+    """
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return any('\\documentclass' in line for line in f)
+    except (IOError, UnicodeDecodeError):
+        return False
 
-def validate_latex_content(content: str) -> bool:
-    """Check if content contains LaTeX-like structure."""
-    return "\\documentclass" in content or "\\begin{document}" in content
+def compile_latex_online(filename: str, output_dir: Optional[Path] = None) -> Tuple[Optional[Path], str]:
+    """
+    Compile LaTeX file to PDF using LaTeX Online API and save to output directory.
+    
+    Args:
+        filename (str): Name of the file to compile.
+        output_dir (Optional[Path]): Directory to save the PDF (defaults to WORKING_DIR).
+    
+    Returns:
+        Tuple[Optional[Path], str]: Path to generated PDF (or None) and logs.
+    """
+    input_path = WORKING_DIR / filename
+    logs = ""
 
-def compile_latex_to_pdf(filename: str, content: str) -> tuple[bytes | None, str]:
-    """Send LaTeX content to a backend API for PDF compilation."""
-    if not validate_latex_content(content):
-        return None, f"⏩ Skipped: {filename} (no valid LaTeX content detected)"
+    # Validate file type
+    if filename.lower().endswith('.txt') and not has_latex_preamble(input_path):
+        return None, f"⏩ Skipped: {filename} (no LaTeX preamble detected)"
+
+    # Read LaTeX content
+    try:
+        with open(input_path, 'r', encoding='utf-8') as f:
+            latex_content = f.read()
+    except Exception as e:
+        return None, f"❌ Failed to read {filename}: {str(e)}"
+
+    # Compile using LaTeX Online API
+    api_url = "https://latexonline.cc/compile"
+    payload = {
+        "text": latex_content,
+        "command": "pdflatex",  # Use pdflatex engine
+        "filename": filename
+    }
 
     try:
-        # Send content to backend API
-        response = requests.post(
-            LATEX_API_URL,
-            json={"content": content, "filename": filename},
-            timeout=30
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get("success") and data.get("pdf"):
-            # Decode base64 PDF from response
-            pdf_data = base64.b64decode(data["pdf"])
-            return pdf_data, "Compilation successful"
+        response = requests.post(api_url, json=payload, timeout=60)
+        if response.status_code == 200 and response.headers.get('content-type') == 'application/pdf':
+            # Save PDF
+            pdf_name = f"{input_path.stem}.pdf"
+            pdf_path = (output_dir or WORKING_DIR) / pdf_name
+            pdf_path.write_bytes(response.content)
+            logs = "✅ Compilation successful via LaTeX Online."
+            return pdf_path, logs
         else:
-            return None, f"❌ Compilation failed: {data.get('error', 'Unknown error')}"
+            logs = f"❌ Compilation failed: {response.text}"
+            return None, logs
     except requests.Timeout:
         return None, f"❌ Compilation timed out for {filename}"
     except requests.RequestException as e:
-        return None, f"❌ Compilation error: {str(e)}"
-
-def cleanup_temp_files() -> None:
-    """Remove temporary files."""
-    for file in WORKING_DIR.iterdir():
-        try:
-            file.unlink()
-        except OSError:
-            pass
+        return None, f"❌ Network error for {filename}: {str(e)}"
 
 # Streamlit UI
 st.title("📝 Online LaTeX Compiler")
-st.markdown(
-    """
-    Upload `.tex` or `.txt` files containing LaTeX code to generate PDFs.
-    Preview your LaTeX in real-time below.
-    """
+st.markdown("Upload `.tex` or `.txt` files to compile into PDFs using an online LaTeX compiler.")
+
+# Input for output directory
+output_dir_input = st.text_input(
+    "Output Directory for PDFs (leave blank to use temporary storage)",
+    placeholder="e.g., /home/user/docs",
+    help="Enter a folder to save PDFs (server-side; downloads always available)."
 )
 
-# KaTeX for live preview (loaded via CDN in HTML)
-st.markdown(
-    """
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <div id="latex-preview"></div>
-    <script>
-        function renderLatex(content) {
-            try {
-                katex.render(content, document.getElementById('latex-preview'), {
-                    throwOnError: false,
-                    displayMode: true
-                });
-            } catch (e) {
-                document.getElementById('latex-preview').innerHTML = 'Preview error: ' + e.message;
-            }
-        }
-    </script>
-    """,
-    unsafe_allow_html=True
-)
+# Validate output directory (server-side)
+output_dir = None
+if output_dir_input:
+    try:
+        output_dir = Path(output_dir_input).resolve()
+        if not output_dir.is_dir():
+            st.error(f"❌ Invalid directory: {output_dir_input}. Using temporary storage.")
+            output_dir = None
+    except OSError as e:
+        st.error(f"❌ Error accessing directory {output_dir_input}: {str(e)}. Using temporary storage.")
+        output_dir = None
 
 # File uploader
 uploaded_files = st.file_uploader(
@@ -91,72 +103,71 @@ uploaded_files = st.file_uploader(
     help="Maximum file size: 10MB"
 )
 
+# Store uploaded file names
+if "uploaded_filenames" not in st.session_state:
+    st.session_state.uploaded_filenames = []
+
 if uploaded_files:
+    st.session_state.uploaded_filenames = []
     for file in uploaded_files:
         if file.size > 10_000_000:  # 10MB limit
             st.error(f"❌ {file.name} exceeds 10MB limit")
             continue
         file_path = WORKING_DIR / file.name
-        file_path.write_bytes(file.getbuffer())
-    st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully.")
+        try:
+            file_path.write_bytes(file.getbuffer())
+            st.session_state.uploaded_filenames.append(file.name)
+        except OSError as e:
+            st.error(f"❌ Failed to save {file.name}: {str(e)}")
+            continue
+    if st.session_state.uploaded_filenames:
+        st.success(f"✅ {len(st.session_state.uploaded_filenames)} file(s) uploaded successfully.")
 
-# Text area for editing and preview
-st.subheader("Edit LaTeX Code")
-selected_file = st.selectbox(
-    "Select a file to edit or preview:",
-    options=[f.name for f in WORKING_DIR.iterdir()] if any(WORKING_DIR.iterdir()) else ["No files uploaded"]
-)
-
-if selected_file != "No files uploaded":
-    file_path = WORKING_DIR / selected_file
-    with open(file_path, 'r', encoding='utf-8') as f:
-        latex_content = f.read()
+# Display uploaded files and PDFs
+if st.session_state.uploaded_filenames:
+    st.subheader("📂 Uploaded Files")
     
-    edited_content = st.text_area(
-        "Edit LaTeX code:",
-        value=latex_content,
-        height=300
-    )
-    
-    # Update file with edited content
-    if edited_content != latex_content:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(edited_content)
-        st.success("✅ File updated with new content.")
-    
-    # Trigger KaTeX preview
-    st.markdown(
-        f"""
-        <script>
-            renderLatex({repr(edited_content)});
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
-
-if st.button("📄 Compile LaTeX Files", key="compile_button"):
-    if not any(WORKING_DIR.glob("*.[tT][eE][xX]") or WORKING_DIR.glob("*.[tT][xX][tT]")):
-        st.warning("⚠️ No files to compile.")
-    else:
-        with st.spinner("Compiling files..."):
-            for file in WORKING_DIR.glob("*.[tT][eE][xX]") or WORKING_DIR.glob("*.[tT][xX][tT]"):
-                with open(file, 'r', encoding='utf-8') as f:
-                    content = f.read()
+    for filename in sorted(st.session_state.uploaded_filenames):
+        file_path = WORKING_DIR / filename
+        pdf_dir = output_dir if output_dir else WORKING_DIR
+        pdf_path = pdf_dir / f"{Path(filename).stem}.pdf"
+        
+        st.markdown(f"**{filename}**")
+        
+        # Check for existing PDF
+        if pdf_path.exists():
+            st.success(f"✅ PDF found: {pdf_path.name}")
+            st.download_button(
+                label=f"📥 Download {pdf_path.name}",
+                data=pdf_path.read_bytes(),
+                file_name=pdf_path.name,
+                mime="application/pdf",
+                key=f"download_{filename}_{str(pdf_path.stat().st_mtime)}"
+            )
+        else:
+            st.info(f"ℹ️ No PDF found for {filename}. Compile to generate one.")
+        
+        # Compile option
+        if st.button(f"📄 Compile {filename}", key=f"compile_{filename}"):
+            with st.spinner(f"Compiling {filename}..."):
+                pdf_path, logs = compile_latex_online(filename, output_dir)
                 
-                pdf_data, message = compile_latex_to_pdf(file.name, content)
-                st.subheader(f"📂 {file.name}")
-                
-                if pdf_data:
-                    st.success(f"✅ PDF generated for {file.name}")
+                if pdf_path and pdf_path.exists():
+                    st.success(f"✅ PDF generated: {pdf_path.name}")
                     st.download_button(
-                        "📥 Download PDF",
-                        pdf_data,
-                        file_name=f"{file.stem}.pdf"
+                        label=f"📥 Download {pdf_path.name}",
+                        data=pdf_path.read_bytes(),
+                        file_name=pdf_path.name,
+                        mime="application/pdf",
+                        key=f"download_new_{filename}_{str(pdf_path.stat().st_mtime)}"
                     )
                 else:
-                    st.error(f"❌ Compilation failed: {message}")
-            
-            cleanup_temp_files()
-            st.info("🧹 Cleanup of temporary files completed.")
+                    st.error("❌ Compilation failed.")
+                
+                if logs:
+                    with st.expander("🧾 View Compilation Logs"):
+                        st.text(logs)
+else:
+    st.info("ℹ️ Upload files to start compiling.")
 
 
