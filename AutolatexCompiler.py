@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Tuple, Optional, List
 import urllib.parse
+import platform
 
 # Suppress Streamlit warnings
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
@@ -30,20 +31,38 @@ def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
         Tuple[bool, str]: (True if valid, success/error message).
     """
     try:
-        pdflatex_path = Path(pdflatex_path).resolve()
-        if not pdflatex_path.is_file():
+        # Normalize path for Windows
+        if platform.system() == "Windows":
+            pdflatex_path = pdflatex_path.replace('/', '\\').replace('\\\\', '\\')
+        
+        # Create Path object
+        path_obj = Path(pdflatex_path)
+        
+        # Check if path exists as a file without resolving (to avoid mount issues)
+        if not path_obj.is_file():
             return False, f"Path does not point to a file: {pdflatex_path}"
+        
+        # Try resolving path, but fall back to original if resolution fails
+        try:
+            resolved_path = path_obj.resolve()
+            # Check if resolved path contains unexpected mount prefix
+            if str(resolved_path).startswith(('/mount', '/mnt')) and platform.system() == "Windows":
+                resolved_path = path_obj  # Use original path to avoid WSL/container prefix
+        except FileNotFoundError:
+            resolved_path = path_obj
+        
         # Test if the path points to a valid pdflatex executable
+        cmd = [str(resolved_path), "--version"]
         result = subprocess.run(
-            [str(pdflatex_path), "--version"],
+            cmd,
             capture_output=True,
             text=True,
             timeout=10
         )
         if result.returncode == 0 and "pdfTeX" in result.stdout:
-            return True, f"Valid pdflatex path: {pdflatex_path}"
+            return True, f"Valid pdflatex path: {resolved_path}"
         else:
-            return False, f"Invalid pdflatex executable. Return code: {result.returncode}, Output: {result.stdout[:100]}..."
+            return False, f"Invalid pdflatex executable. Command: {cmd}, Return code: {result.returncode}, Output: {result.stdout[:100]}..."
     except FileNotFoundError:
         return False, f"File not found: {pdflatex_path}"
     except PermissionError:
@@ -240,7 +259,7 @@ if pdflatex_path:
 # Input for output directory
 output_dir_input = st.text_input(
     "Output Directory for PDFs (leave blank to use working directory)",
-    placeholder="e.g., C:/Users/YourName/Documents",
+    placeholder="e.g., C:/Users/pc/Documents",
     help="Enter the folder where your .tex/.txt files are located to save PDFs there."
 )
 
