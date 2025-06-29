@@ -38,21 +38,28 @@ def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
         # Create Path object
         path_obj = Path(pdflatex_path)
         
-        # Check if path exists as a file without resolving (to avoid mount issues)
-        if not path_obj.is_file():
-            return False, f"Path does not point to a file: {pdflatex_path}"
+        # Log the path being tested
+        st.info(f"Testing pdflatex path: {path_obj}")
         
-        # Try resolving path, but fall back to original if resolution fails
-        try:
-            resolved_path = path_obj.resolve()
-            # Check if resolved path contains unexpected mount prefix
-            if str(resolved_path).startswith(('/mount', '/mnt')) and platform.system() == "Windows":
-                resolved_path = path_obj  # Use original path to avoid WSL/container prefix
-        except FileNotFoundError:
-            resolved_path = path_obj
+        # Check if path exists as a file without resolving
+        if not path_obj.is_file():
+            # Try alternative case variations for MiKTeX
+            possible_paths = [
+                str(path_obj).replace('MiKTeX', 'miktex').replace('miktex', 'MiKTeX'),
+                str(path_obj).replace('miktex', 'MiKTeX'),
+                str(path_obj).replace('MiKTeX', 'miktex')
+            ]
+            for alt_path in possible_paths:
+                alt_path_obj = Path(alt_path)
+                if alt_path_obj.is_file():
+                    path_obj = alt_path_obj
+                    st.info(f"Found file with adjusted case: {path_obj}")
+                    break
+            else:
+                return False, f"Path does not point to a file: {pdflatex_path}"
         
         # Test if the path points to a valid pdflatex executable
-        cmd = [str(resolved_path), "--version"]
+        cmd = [str(path_obj), "--version"]
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -60,7 +67,7 @@ def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
             timeout=10
         )
         if result.returncode == 0 and "pdfTeX" in result.stdout:
-            return True, f"Valid pdflatex path: {resolved_path}"
+            return True, f"Valid pdflatex path: {path_obj}"
         else:
             return False, f"Invalid pdflatex executable. Command: {cmd}, Return code: {result.returncode}, Output: {result.stdout[:100]}..."
     except FileNotFoundError:
@@ -245,7 +252,186 @@ st.subheader("⚙️ Configuration")
 pdflatex_path = st.text_input(
     "pdflatex Path (optional)",
     placeholder="e.g., C:/Users/pc/AppData/Local/Programs/MiKTeX/miktex/bin/x64/pdflatex.exe",
-    help="Enter the full path to the pdflatex executable. Leave blank to use pdflatex from your system PATH."
+    help="Enter the full path to the pdflatex executable. Use forward (/) or backslashes (\\). Leave blank to use pdflatex from your system PATH."
+)
+
+# Validate pdflatex path if provided
+if pdflatex_path:
+    is_valid, message = is_valid_pdflatex_path(pdflatex_path)
+    if is_valid:
+        st.success(f"✅ {message}")
+    else:
+        st.error(f"❌ {message}")
+
+# Input for output directory
+output_dir_input = st.text_input(
+    "Output Directory for PDFs (leave blank to use working directory)",
+    placeholder="e.g., C:/Users/pc/Documents",
+    help="Enter the folder where your .tex/.txt files are located to save PDFs there."
+)
+
+# Validate output directory
+output_dir = None
+if output_dir_input:
+    try:
+        output_dir = Path(output_dir_input).resolve()
+        if not output_dir.is_dir():
+            st.error(f"❌ Invalid directory: {output_dir_input}. Using working directory instead.")
+            output_dir = None
+    except OSError as e:
+        st.error(f"❌ Error accessing directory {output_dir_input}: {str(e)}. Using working directory instead.")
+        output_dir = None
+
+# GitHub repository input
+st.subheader("📦 Compile from GitHub")
+github_repo_url = st.text_input(
+    "GitHub Repository URL",
+    placeholder="e.g., https://github.com/username/repo",
+    help="Enter the GitHub repository URL containing your LaTeX project."
+)
+github_file_path = st.text_input(
+    "Main .tex File Path",
+    placeholder="e.g., path/to/Fourier VS Dunkl.tex",
+    help="Enter the path to the main .tex file in the repository."
+)
+
+# Compile from GitHub
+if github_repo_url and github_file_path:
+    if st.button("📄 Compile from GitHub", key="compile_github"):
+        with st.spinner(f"Compiling {github_file_path} from GitHub..."):
+            pdf_path, logs = compile_latex_from_github(github_repo_url, github_file_path, output_dir)
+            
+            if pdf_path and pdf_path.exists():
+                st.success(f"✅ PDF generated: {pdf_path}")
+                st.download_button(
+                    label=f"📥 Download {pdf_path.name}",
+                    data=pdf_path.read_bytes(),
+                    file_name=pdf_path.name,
+                    mime="application/pdf",
+                    key=f"download_github_{pdf_path.name}_{str(pdf_path.stat().st_mtime)}"
+                )
+            else:
+                st.error("❌ Compilation failed.")
+            
+            if logs:
+                with st.expander("🧾 View Compilation Logs"):
+                    st.text(logs)
+
+# File uploader with size limit
+st.subheader("📤 Upload Local Files")
+uploaded_files = st.file_uploader(
+    "Drop your files here:",
+    type=["tex", "txt"],
+    accept_multiple_files=True,
+    help="Maximum file size: 10MB"
+)
+
+# Store uploaded file names
+if "uploaded_filenames" not in st.session_state:
+    st.session_state.uploaded_filenames = []
+
+if uploaded_files:
+    st.session_state.uploaded_filenames = []  # Reset for new uploads
+    compiled_files = []
+    for file in uploaded_files:
+        if file.size > 10_000_000:  # 10MB limit
+            st.error(f"❌ {file.name} exceeds 10MB limit")
+            continue
+        file_path = WORKING_DIR / file.name
+        try:
+            file_path.write_bytes(file.getbuffer())
+            st.session_state.uploaded_filenames.append(file.name)
+            compiled_files.append(file.name)
+        except OSError as e:
+            st.error(f"❌ Failed to save {file.name}: {str(e)}")
+            continue
+    if st.session_state.uploaded_filenames:
+        st.success(f"✅ {len(st.session_state.uploaded_filenames)} file(s) uploaded successfully.")
+    else:
+        st.warning("⚠️ No files were uploaded successfully.")
+
+# Display uploaded files and PDFs
+if st.session_state.uploaded_filenames:
+    st.subheader("📂 Uploaded Files")
+    compiled_files = []
+    
+    for filename in sorted(st.session_state.uploaded_filenames):
+        file_path = WORKING_DIR / filename
+        pdf_dir = output_dir if output_dir else WORKING_DIR
+        pdf_path = pdf_dir / f"{Path(filename).stem}.pdf"
+        
+        st.markdown(f"**{filename}**")
+        
+        # Check for existing PDF
+        if pdf_path.exists():
+            st.success(f"✅ PDF found: {pdf_path}")
+            st.download_button(
+                label=f"📥 Download {pdf_path.name}",
+                data=pdf_path.read_bytes(),
+                file_name=pdf_path.name,
+                mime="application/pdf",
+                key=f"download_{filename}_{str(pdf_path.stat().st_mtime)}"
+            )
+        else:
+            st.info(f"ℹ️ No PDF found for {filename}. Compile to generate one.")
+        
+        # Compile option
+        if st.button(f"📄 Compile {filename}", key=f"compile_{filename}"):
+            if not pdflatex_path and not shutil.which("pdflatex"):
+                st.error("❌ pdflatex not found in system PATH. Please provide a valid pdflatex path.")
+            elif not file_path.exists():
+                st.error(f"❌ File {filename} not found in working directory.")
+            else:
+                with st.spinner(f"Compiling {filename}..."):
+                    pdf_path, logs = compile_latex_file(filename, output_dir, pdflatex_path)
+                    
+                    if pdf_path and pdf_path.exists():
+                        st.success(f"✅ PDF generated: {pdf_path}")
+                        st.download_button(
+                            label=f"📥 Download {pdf_path.name  return None, "❌ Invalid GitHub repository URL. Must start with https://github.com/"
+    if not file_path.lower().endswith('.tex'):
+        return None, "❌ File path must point to a .tex file"
+
+    temp_pdf = WORKING_DIR / f"{Path(file_path).stem}.pdf"
+    git_url = repo_url.rstrip('/') + '.git'
+    encoded_file_path = urllib.parse.quote(file_path)
+    api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_file_path}&command=pdflatex"
+
+    headers = {'Accept': 'application/pdf'}
+    try:
+        response = requests.get(api_url, headers=headers, timeout=60)
+        if response.status_code == 200 and 'application/pdf' in response.headers.get('Content-Type', ''):
+            with open(temp_pdf, 'wb') as f:
+                f.write(response.content)
+            if output_dir and output_dir.is_dir():
+                final_pdf = output_dir / f"{Path(file_path).stem}.pdf"
+                try:
+                    temp_pdf.rename(final_pdf)
+                    return final_pdf, "✅ Compilation successful"
+                except OSError as e:
+                    st.warning(f"⚠️ Failed to move PDF to {output_dir}: {str(e)}. Keeping in {WORKING_DIR}")
+                    return temp_pdf, "✅ Compilation successful"
+            return temp_pdf, "✅ Compilation successful"
+        else:
+            return None, f"❌ Compilation error for {file_path}:\nStatus: {response.status_code}\n{response.text}"
+    except requests.Timeout:
+        return None, f"❌ Compilation timed out for {file_path}"
+    except requests.RequestException as e:
+        return None, f"❌ Network error for {file_path}: {str(e)}"
+
+# Streamlit UI
+st.title("📝 LaTeX Compiler")
+st.markdown("""
+Compile LaTeX files into PDFs. Upload local `.tex` or `.txt` files to compile using local pdflatex, or provide a GitHub repository URL to compile using LaTeX.Online.
+PDFs will be saved to the specified folder or the working directory.
+""")
+
+# Input for pdflatex path
+st.subheader("⚙️ Configuration")
+pdflatex_path = st.text_input(
+    "pdflatex Path (optional)",
+    placeholder="e.g., C:/Users/pc/AppData/Local/Programs/MiKTeX/miktex/bin/x64/pdflatex.exe",
+    help="Enter the full path to the pdflatex executable. Use forward (/) or backslashes (\\). Leave blank to use pdflatex from your system PATH."
 )
 
 # Validate pdflatex path if provided
