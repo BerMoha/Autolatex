@@ -23,61 +23,57 @@ WORKING_DIR.mkdir(exist_ok=True)
 def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
     """
     Validate if the provided pdflatex path points to an executable file.
-    
+
     Args:
         pdflatex_path (str): Path to pdflatex executable.
-    
+
     Returns:
         Tuple[bool, str]: (True if valid, success/error message).
     """
     try:
-        # Normalize path for Windows
-        if platform.system() == "Windows":
-            pdflatex_path = pdflatex_path.replace('/', '\\').replace('\\\\', '\\')
-        
-        # Create Path object
-        path_obj = Path(pdflatex_path)
-        
-        # Log the path being tested
-        st.info(f"Testing pdflatex path: {path_obj}")
-        
-        # Check if path exists as a file without resolving
+        # Crée un objet Path résolu
+        path_obj = Path(pdflatex_path).resolve()
+
+        # Log de débogage
+        st.info(f"🔍 Testing pdflatex path: {path_obj}")
+        st.text(f"Exists: {path_obj.exists()}")
+        st.text(f"Is file: {path_obj.is_file()}")
+
+        # Si le chemin n'est pas un fichier, tente avec une autre casse
         if not path_obj.is_file():
-            # Try alternative case variations for MiKTeX
-            possible_paths = [
-                str(path_obj).replace('MiKTeX', 'miktex').replace('miktex', 'MiKTeX'),
-                str(path_obj).replace('miktex', 'MiKTeX'),
-                str(path_obj).replace('MiKTeX', 'miktex')
+            variants = [
+                pdflatex_path.replace("MiKTeX", "miktex"),
+                pdflatex_path.replace("miktex", "MiKTeX")
             ]
-            for alt_path in possible_paths:
-                alt_path_obj = Path(alt_path)
-                if alt_path_obj.is_file():
-                    path_obj = alt_path_obj
-                    st.info(f"Found file with adjusted case: {path_obj}")
+            for alt in variants:
+                alt_obj = Path(alt).resolve()
+                if alt_obj.is_file():
+                    st.info(f"✅ Found valid file with case variant: {alt_obj}")
+                    path_obj = alt_obj
                     break
             else:
-                return False, f"Path does not point to a file: {pdflatex_path}"
-        
-        # Test if the path points to a valid pdflatex executable
-        cmd = [str(path_obj), "--version"]
+                return False, f"❌ Path does not point to a file: {pdflatex_path}"
+
+        # Vérifie si l’exécutable est bien pdflatex
         result = subprocess.run(
-            cmd,
+            [str(path_obj), "--version"],
             capture_output=True,
             text=True,
             timeout=10
         )
         if result.returncode == 0 and "pdfTeX" in result.stdout:
-            return True, f"Valid pdflatex path: {path_obj}"
+            return True, f"✅ Valid pdflatex path: {path_obj}"
         else:
-            return False, f"Invalid pdflatex executable. Command: {cmd}, Return code: {result.returncode}, Output: {result.stdout[:100]}..."
+            return False, f"❌ Invalid pdflatex executable. Output:\n{result.stdout[:200]}"
+
     except FileNotFoundError:
-        return False, f"File not found: {pdflatex_path}"
+        return False, f"❌ File not found: {pdflatex_path}"
     except PermissionError:
-        return False, f"Permission denied: {pdflatex_path}"
+        return False, f"❌ Permission denied when accessing: {pdflatex_path}"
     except subprocess.TimeoutExpired:
-        return False, f"Timeout while validating: {pdflatex_path}"
-    except subprocess.SubprocessError as e:
-        return False, f"Subprocess error: {str(e)}"
+        return False, f"❌ Timeout while checking: {pdflatex_path}"
+    except Exception as e:
+        return False, f"❌ Unexpected error: {str(e)}
 
 def has_latex_preamble(filepath: Path) -> bool:
     """
