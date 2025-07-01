@@ -73,7 +73,7 @@ def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
     except subprocess.TimeoutExpired:
         return False, f"❌ Timeout while checking: {pdflatex_path}"
     except Exception as e:
-        return False, f"❌ Unexpected error: {str(e)}
+        return False, f"❌ Unexpected error: {str(e)}"
 
 def has_latex_preamble(filepath: Path) -> bool:
     """
