@@ -22,39 +22,28 @@ WORKING_DIR.mkdir(exist_ok=True)
 
 def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
     """
-    Validate if the provided pdflatex path points to an executable file.
-
-    Args:
-        pdflatex_path (str): Path to pdflatex executable.
-
-    Returns:
-        Tuple[bool, str]: (True if valid, success/error message).
+    Validate if the provided pdflatex path points to a valid pdflatex executable.
     """
-    try:
-        # Crée un objet Path résolu
-        path_obj = Path(pdflatex_path).resolve()
+    import ntpath
 
-        # Log de débogage
+    try:
+        # Si on est sur Windows, on force la normalisation Windows
+        if platform.system() == "Windows":
+            path_obj = Path(ntpath.normpath(pdflatex_path)).resolve()
+        else:
+            # Sous Linux ou WSL, vérifier s'il s'agit d'un chemin Windows mal copié
+            if ":" in pdflatex_path:
+                return False, f"⚠️ You appear to be running this in a Linux environment but provided a Windows path: {pdflatex_path}"
+            path_obj = Path(pdflatex_path).resolve()
+
         st.info(f"🔍 Testing pdflatex path: {path_obj}")
         st.text(f"Exists: {path_obj.exists()}")
         st.text(f"Is file: {path_obj.is_file()}")
 
-        # Si le chemin n'est pas un fichier, tente avec une autre casse
         if not path_obj.is_file():
-            variants = [
-                pdflatex_path.replace("MiKTeX", "miktex"),
-                pdflatex_path.replace("miktex", "MiKTeX")
-            ]
-            for alt in variants:
-                alt_obj = Path(alt).resolve()
-                if alt_obj.is_file():
-                    st.info(f"✅ Found valid file with case variant: {alt_obj}")
-                    path_obj = alt_obj
-                    break
-            else:
-                return False, f"❌ Path does not point to a file: {pdflatex_path}"
+            return False, f"❌ Path does not point to a file: {pdflatex_path}"
 
-        # Vérifie si l’exécutable est bien pdflatex
+        # Check version
         result = subprocess.run(
             [str(path_obj), "--version"],
             capture_output=True,
@@ -65,13 +54,6 @@ def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
             return True, f"✅ Valid pdflatex path: {path_obj}"
         else:
             return False, f"❌ Invalid pdflatex executable. Output:\n{result.stdout[:200]}"
-
-    except FileNotFoundError:
-        return False, f"❌ File not found: {pdflatex_path}"
-    except PermissionError:
-        return False, f"❌ Permission denied when accessing: {pdflatex_path}"
-    except subprocess.TimeoutExpired:
-        return False, f"❌ Timeout while checking: {pdflatex_path}"
     except Exception as e:
         return False, f"❌ Unexpected error: {str(e)}"
 
