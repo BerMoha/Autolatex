@@ -1,3 +1,13 @@
+
+import os
+st.write("os.getcwd():", os.getcwd())
+st.write("os.getlogin():", os.getlogin())
+st.write("Path exists:", os.path.exists(r"C:\Users\pc\AppData\Local\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe"))
+st.write("Is file:", os.path.isfile(r"C:\Users\pc\AppData\Local\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe"))
+
+
+
+
 import streamlit as st
 import os
 import subprocess
