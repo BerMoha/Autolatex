@@ -1,12 +1,11 @@
 
-import streamlit as st
 import os
-import getpass
+import platform
 
-st.write("os.getcwd():", os.getcwd())
-st.write("getpass.getuser():", getpass.getuser())
-st.write("Path exists:", os.path.exists(r"C:\Users\pc\AppData\Local\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe"))
-st.write("Is file:", os.path.isfile(r"C:\Users\pc\AppData\Local\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe"))
+if platform.system() == "Windows":
+    pdflatex_path = r"C:\Users\pc\AppData\Local\Programs\MiKTeX\miktex\bin\x64\pdflatex.exe"
+else:
+    pdflatex_path = "/usr/bin/pdflatex"  # Or the path used in your remote server
 
 
 
