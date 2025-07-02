@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Tuple, Optional, List
 import urllib.parse
+import platform
 
 # Suppress Streamlit warnings
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
@@ -19,6 +20,43 @@ st.set_page_config(page_title="📝 LaTeX Compiler", layout="centered")
 WORKING_DIR = Path("compiled_latex")
 WORKING_DIR.mkdir(exist_ok=True)
 
+def is_valid_pdflatex_path(pdflatex_path: str) -> Tuple[bool, str]:
+    """
+    Validate if the provided pdflatex path points to a valid pdflatex executable.
+    """
+    import ntpath
+
+    try:
+        # Si on est sur Windows, on force la normalisation Windows
+        if platform.system() == "Windows":
+            path_obj = Path(ntpath.normpath(pdflatex_path)).resolve()
+        else:
+            # Sous Linux ou WSL, vérifier s'il s'agit d'un chemin Windows mal copié
+            if ":" in pdflatex_path:
+                return False, f"⚠️ You appear to be running this in a Linux environment but provided a Windows path: {pdflatex_path}"
+            path_obj = Path(pdflatex_path).resolve()
+
+        st.info(f"🔍 Testing pdflatex path: {path_obj}")
+        st.text(f"Exists: {path_obj.exists()}")
+        st.text(f"Is file: {path_obj.is_file()}")
+
+        if not path_obj.is_file():
+            return False, f"❌ Path does not point to a file: {pdflatex_path}"
+
+        # Check version
+        result = subprocess.run(
+            [str(path_obj), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0 and "pdfTeX" in result.stdout:
+            return True, f"✅ Valid pdflatex path: {path_obj}"
+        else:
+            return False, f"❌ Invalid pdflatex executable. Output:\n{result.stdout[:200]}"
+    except Exception as e:
+        return False, f"❌ Unexpected error: {str(e)}"
+
 def has_latex_preamble(filepath: Path) -> bool:
     """
     Check if file contains LaTeX preamble.
@@ -29,13 +67,14 @@ def has_latex_preamble(filepath: Path) -> bool:
     except (IOError, UnicodeDecodeError):
         return False
 
-def compile_latex_file(filename: str, output_dir: Optional[Path] = None) -> Tuple[Optional[Path], str]:
+def compile_latex_file(filename: str, output_dir: Optional[Path] = None, pdflatex_path: Optional[str] = None) -> Tuple[Optional[Path], str]:
     """
     Compile LaTeX file to PDF using local pdflatex and save PDF to the specified output directory.
     
     Args:
         filename (str): Name of the file to compile.
         output_dir (Optional[Path]): Directory to save the PDF (defaults to WORKING_DIR).
+        pdflatex_path (Optional[str]): Path to pdflatex executable (if provided).
     
     Returns:
         Tuple[Optional[Path], str]: Path to generated PDF (or None) and compilation logs.
@@ -57,15 +96,23 @@ def compile_latex_file(filename: str, output_dir: Optional[Path] = None) -> Tupl
     # Compile in WORKING_DIR
     temp_pdf = WORKING_DIR / f"{input_path.stem}.pdf"
 
-    # Check if pdflatex is installed
-    if not shutil.which("pdflatex"):
-        return None, "❌ pdflatex not found. Please install it and add to PATH."
+    # Determine pdflatex executable
+    if pdflatex_path:
+        is_valid, message = is_valid_pdflatex_path(pdflatex_path)
+        if is_valid:
+            pdflatex_cmd = str(pdflatex_path)
+        else:
+            return None, f"❌ Invalid pdflatex path: {message}"
+    else:
+        pdflatex_cmd = shutil.which("pdflatex")
+        if not pdflatex_cmd:
+            return None, "❌ pdflatex not found in system PATH. Please provide a valid pdflatex path."
 
     try:
         # Run pdflatex with timeout
         result = subprocess.run(
             [
-                "pdflatex",
+                pdflatex_cmd,
                 "-interaction=nonstopmode",
                 "-halt-on-error",
                 f"-output-directory={WORKING_DIR}",
@@ -139,36 +186,22 @@ def compile_latex_from_github(repo_url: str, file_path: str, output_dir: Optiona
     Returns:
         Tuple[Optional[Path], str]: Path to generated PDF (or None) and compilation logs.
     """
-    # Validate inputs
     if not repo_url.startswith("https://github.com/"):
         return None, "❌ Invalid GitHub repository URL. Must start with https://github.com/"
     if not file_path.lower().endswith('.tex'):
         return None, "❌ File path must point to a .tex file"
 
-    # Prepare output path
     temp_pdf = WORKING_DIR / f"{Path(file_path).stem}.pdf"
-
-    # Construct LaTeX.Online Git API URL
     git_url = repo_url.rstrip('/') + '.git'
     encoded_file_path = urllib.parse.quote(file_path)
     api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_file_path}&command=pdflatex"
 
-    # Debug: Log API URL
-    st.write(f"DEBUG: Git API URL: {api_url}")
-
-    # Send request to LaTeX.Online
     headers = {'Accept': 'application/pdf'}
     try:
         response = requests.get(api_url, headers=headers, timeout=60)
-        st.write(f"DEBUG: Git API Response Status: {response.status_code}")
-        st.write(f"DEBUG: Git API Response Text: {response.text[:1000]}...")  # Limit for readability
-
         if response.status_code == 200 and 'application/pdf' in response.headers.get('Content-Type', ''):
-            # Save PDF
             with open(temp_pdf, 'wb') as f:
                 f.write(response.content)
-            
-            # Move PDF to output_dir if specified
             if output_dir and output_dir.is_dir():
                 final_pdf = output_dir / f"{Path(file_path).stem}.pdf"
                 try:
@@ -192,10 +225,26 @@ Compile LaTeX files into PDFs. Upload local `.tex` or `.txt` files to compile us
 PDFs will be saved to the specified folder or the working directory.
 """)
 
+# Input for pdflatex path
+st.subheader("⚙️ Configuration")
+pdflatex_path = st.text_input(
+    "pdflatex Path (optional)",
+    placeholder="e.g., C:/Users/pc/AppData/Local/Programs/MiKTeX/miktex/bin/x64/pdflatex.exe",
+    help="Enter the full path to the pdflatex executable. Use forward (/) or backslashes (\\). Leave blank to use pdflatex from your system PATH."
+)
+
+# Validate pdflatex path if provided
+if pdflatex_path:
+    is_valid, message = is_valid_pdflatex_path(pdflatex_path)
+    if is_valid:
+        st.success(f"✅ {message}")
+    else:
+        st.error(f"❌ {message}")
+
 # Input for output directory
 output_dir_input = st.text_input(
     "Output Directory for PDFs (leave blank to use working directory)",
-    placeholder="e.g., C:/Users/YourName/Documents or /home/user/docs",
+    placeholder="e.g., C:/Users/pc/Documents",
     help="Enter the folder where your .tex/.txt files are located to save PDFs there."
 )
 
@@ -306,13 +355,13 @@ if st.session_state.uploaded_filenames:
         
         # Compile option
         if st.button(f"📄 Compile {filename}", key=f"compile_{filename}"):
-            if not shutil.which("pdflatex"):
-                st.error("❌ pdflatex not found. Please install it and add to PATH.")
+            if not pdflatex_path and not shutil.which("pdflatex"):
+                st.error("❌ pdflatex not found in system PATH. Please provide a valid pdflatex path.")
             elif not file_path.exists():
                 st.error(f"❌ File {filename} not found in working directory.")
             else:
                 with st.spinner(f"Compiling {filename}..."):
-                    pdf_path, logs = compile_latex_file(filename, output_dir)
+                    pdf_path, logs = compile_latex_file(filename, output_dir, pdflatex_path)
                     
                     if pdf_path and pdf_path.exists():
                         st.success(f"✅ PDF generated: {pdf_path}")
