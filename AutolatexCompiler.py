@@ -1,4 +1,3 @@
-
 import streamlit as st
 import requests
 import urllib.parse
@@ -6,6 +5,7 @@ from pathlib import Path
 from typing import Tuple, Optional, List
 import asyncio
 import time
+import json
 
 # Page configuration
 st.set_page_config(page_title="📝 LaTeX Online Compiler", layout="centered")
@@ -27,23 +27,35 @@ async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Opti
     """
     if not repo_url.startswith("https://github.com/"):
         return None, "❌ Invalid GitHub URL. Must start with https://github.com/"
+
     if not file_path.lower().endswith('.tex'):
         return None, f"❌ File {file_path} must be a .tex file."
 
     pdf_path = WORKING_DIR / f"{Path(file_path).stem}.pdf"
     git_url = repo_url.rstrip('/') + '.git'
-    encoded_file_path = urllib.parse.quote(file_path)
+    encoded_file_path = urllib.parse.quote(file_path, safe='')
     api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_file_path}&command=pdflatex"
+
+    st.info(f"Attempting to compile {file_path} with API: {api_url}")
 
     try:
         response = requests.get(api_url, headers={'Accept': 'application/pdf'}, timeout=60)
         if response.status_code == 200 and 'application/pdf' in response.headers.get('Content-Type', ''):
             with open(pdf_path, 'wb') as f:
                 f.write(response.content)
+            st.info(f"✅ Successfully generated PDF: {pdf_path}")
             return pdf_path, "✅ Compilation successful"
-        return None, f"❌ Compilation error for {file_path}: Status {response.status_code}\n{response.text[:100]}..."
+        else:
+            # Attempt to parse error message from LaTeX.Online
+            error_msg = response.text
+            try:
+                error_json = json.loads(response.text)
+                error_msg = error_json.get('message', response.text)
+            except json.JSONDecodeError:
+                error_msg = response.text[:200] + "..." if len(response.text) > 200 else response.text
+            return None, f"❌ Compilation error for {file_path}: Status {response.status_code}\n{error_msg}"
     except requests.Timeout:
-        return None, f"❌ Compilation timed out for {file_path}"
+        return None, f"❌ Compilation timed out for {file_path}. Check internet connection or try again."
     except requests.RequestException as e:
         return None, f"❌ Network error for {file_path}: {str(e)}"
 
@@ -64,7 +76,12 @@ async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[T
 
 # Streamlit UI
 st.title("📝 LaTeX Online Compiler")
-st.markdown("Compile multiple LaTeX files from a GitHub repository using LaTeX.Online. Enter file paths separated by commas. PDFs are saved to the 'compiled_latex' folder.")
+st.markdown(
+    """
+    Compile multiple LaTeX files from a GitHub repository using LaTeX.Online. 
+    Enter file paths separated by commas. PDFs are saved to 'C:/Users/pc/AppData/Local/Programs/projects/compiled_latex'.
+    """
+)
 
 # GitHub input
 st.subheader("📦 Compile from GitHub")
@@ -75,7 +92,8 @@ github_repo_url = st.text_input(
 )
 github_file_paths = st.text_input(
     "Main .tex File Paths (comma-separated)",
-    placeholder="e.g., main.tex,chapter1.tex,chapter2.tex"
+    placeholder="e.g., main.tex,chapter1.tex,Fourier VS Dunkl.tex",
+    value="Fourier VS Dunkl.tex"
 )
 
 # Compile button
@@ -109,6 +127,6 @@ if github_repo_url and github_file_paths:
                     if logs:
                         with st.expander(f"🧾 Logs for {file_path}"):
                             st.text(logs)
-
-if not (github_repo_url and github_file_paths):
+                            st.markdown(f"[Test API URL directly]({urllib.parse.quote(api_url, safe=':/?=&')})")
+else:
     st.info("ℹ️ Enter a GitHub URL and .tex file paths to start compiling.")
