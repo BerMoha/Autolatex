@@ -3,7 +3,7 @@ import streamlit as st
 import urllib.parse
 import requests
 
-st.title("Compile LaTeX from GitHub using latexonline.cc")
+st.title("Compile LaTeX from GitHub")
 
 git_url = st.text_input("GitHub repository URL (e.g. https://github.com/owner/repo):")
 file_path = st.text_input("Path to .tex file in repository (e.g. main.tex or docs/paper.tex):")
