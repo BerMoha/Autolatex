@@ -80,25 +80,36 @@ st.markdown("Compile multiple LaTeX files from a GitHub repository using LaTeX.O
 st.subheader("⚙️ Settings")
 output_dir_input = st.text_input(
     "Output Directory (optional)",
-    placeholder="e.g., C:/Users/pc/Documents",
-    help="Folder to save PDFs. Leave blank to use working directory."
+    placeholder="e.g., C:/Users/pc/Desktop/Autolatex",
+    help="Local folder to save PDFs (e.g., C:/Users/pc/Desktop/Autolatex). Leave blank to use working directory."
 )
 output_dir = None
 if output_dir_input:
-    try:
-        output_dir = Path(output_dir_input)
-        if not output_dir.is_dir():
-            st.error(f"❌ Invalid directory: {output_dir_input}")
+    # Check if input is a URL
+    if output_dir_input.lower().startswith(('http://', 'https://')):
+        st.error(f"❌ Output directory cannot be a URL: {output_dir_input}. Use a local path like C:/Users/pc/Desktop/Autolatex.")
+    else:
+        try:
+            output_dir = Path(output_dir_input)
+            # Create directory if it doesn't exist
+            if not output_dir.exists():
+                st.info(f"Directory {output_dir} does not exist. Attempting to create it...")
+                output_dir.mkdir(parents=True, exist_ok=True)
+            if not output_dir.is_dir():
+                st.error(f"❌ Path is not a directory: {output_dir_input}")
+                output_dir = None
+            else:
+                st.info(f"Using output directory: {output_dir}")
+        except Exception as e:
+            st.error(f"❌ Error accessing directory {output_dir_input}: {str(e)}")
             output_dir = None
-    except Exception as e:
-        st.error(f"❌ Error accessing directory: {str(e)}")
-        output_dir = None
 
 # GitHub input
 st.subheader("📦 Compile from GitHub")
 github_repo_url = st.text_input(
     "GitHub Repository URL",
-    placeholder="e.g., https://github.com/username/repo"
+    placeholder="e.g., https://github.com/BerMoha/Autolatex",
+    value="https://github.com/BerMoha/Autolatex"
 )
 github_file_paths = st.text_input(
     "Main .tex File Paths (comma-separated)",
