@@ -112,7 +112,12 @@ def cleanup_files():
 # UI
 st.title("📝 LaTeX Online Compiler")
 
-st.markdown("Compile LaTeX files from a public GitHub repository using LaTeX.Online.")
+st.markdown("Compile LaTeX files from a public GitHub repository using LaTeX.Online. Requires internet connection.")
+
+if not st.connection("internet", type="http"):
+    st.error("❌ This app requires an internet connection to work.")
+    st.stop()
+
 repo_url = st.text_input("GitHub Repository", value="https://github.com/BerMoha/Autolatex")
 file_paths = st.text_input(".tex File Paths (comma-separated)", value="Fourier VS Dunkl.tex")
 password = st.text_input("ZIP Password", type="password")
@@ -162,4 +167,3 @@ if st.button("📄 Compile") and accessible:
             cleanup_files()
             st.session_state.compiled_pdfs = []
             st.info("🧹 Files cleaned.")
-
