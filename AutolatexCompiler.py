@@ -90,7 +90,7 @@ async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[T
 # Streamlit UI
 st.title("📝 LaTeX Online Compiler")
 st.markdown("Compile multiple LaTeX files, "
-            "enter file paths separated by commasand  ensure the repository is public .")
+            "enter file paths separated by commas and  ensure the repository is public .")
 
 # GitHub input
 st.subheader("📦 Compile from GitHub")
