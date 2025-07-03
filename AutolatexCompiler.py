@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Tuple, Optional, List
 import asyncio
 import time
+import os
 
 # Page configuration
 st.set_page_config(page_title="📝 LaTeX Online Compiler", layout="centered")
@@ -39,13 +40,14 @@ def check_repository_access(repo_url: str) -> Tuple[bool, str]:
     except requests.RequestException as e:
         return False, f"❌ Network error checking repository: {str(e)}"
 
-async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Optional[Path], str]:
+async def compile_latex_from_github(repo_url: str, file_path: str, index: int) -> Tuple[Optional[Path], str]:
     """
     Compile a LaTeX file from a GitHub repository using LaTeX.Online.
 
     Args:
         repo_url (str): GitHub repository URL (e.g., https://github.com/username/repo).
         file_path (str): Path to the .tex file in the repository (e.g., main.tex).
+        index (int): Index to ensure unique PDF names.
 
     Returns:
         Tuple[Optional[Path], str]: Path to PDF (or None) and compilation logs.
@@ -55,7 +57,9 @@ async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Opti
     if not file_path.lower().endswith('.tex'):
         return None, f"❌ File {file_path} must be a .tex file."
 
-    temp_pdf = WORKING_DIR / f"{Path(file_path).stem.replace(' ', '_')}.pdf"
+    # Generate unique PDF name with index to avoid overwriting
+    base_name = Path(file_path).stem.replace(' ', '_')
+    temp_pdf = WORKING_DIR / f"{base_name}_{index}_{int(time.time())}.pdf"
     git_url = repo_url.rstrip('/') + '.git'
     encoded_file_path = urllib.parse.quote(file_path)
     api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_file_path}&command=pdflatex"
@@ -83,14 +87,30 @@ async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[T
     Returns:
         List[Tuple[str, Optional[Path], str]]: List of (file_path, PDF path, logs) for each file.
     """
-    tasks = [compile_latex_from_github(repo_url, file_path) for file_path in file_paths]
+    tasks = [compile_latex_from_github(repo_url, file_path, i) for i, file_path in enumerate(file_paths)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     return [(file_paths[i], *results[i]) for i in range(len(file_paths))]
 
+def cleanup_pdfs() -> bool:
+    """
+    Remove all PDF files from the working directory.
+
+    Returns:
+        bool: True if cleanup successful.
+    """
+    success = True
+    for pdf_file in WORKING_DIR.glob("*.pdf"):
+        try:
+            pdf_file.unlink()
+        except OSError as e:
+            st.warning(f"⚠️ Failed to delete {pdf_file.name}: {str(e)}")
+            success = False
+    return success
+
 # Streamlit UI
 st.title("📝 LaTeX Online Compiler")
-st.markdown("Compile multiple LaTeX files, "
-            "enter file paths separated by commas.")
+st.markdown("Compile multiple LaTeX files from a **public** GitHub repository using LaTeX.Online. "
+            "Enter file paths separated by commas. PDFs are saved to compiled_latex directory.")
 
 # GitHub input
 st.subheader("📦 Compile from GitHub")
@@ -130,22 +150,43 @@ if github_repo_url and github_file_paths:
                     results = loop.run_until_complete(compile_multiple_files(github_repo_url, file_paths))
                     loop.close()
 
+                    # Store compiled PDFs in session state for persistence
+                    if "compiled_pdfs" not in st.session_state:
+                        st.session_state.compiled_pdfs = []
                     for file_path, pdf_path, logs in results:
                         st.markdown(f"**{file_path}**")
                         if pdf_path and pdf_path.exists():
                             st.success(f"✅ PDF generated: {pdf_path}")
-                            st.download_button(
-                                label=f"📥 Download {pdf_path.name}",
-                                data=pdf_path.read_bytes(),
-                                file_name=pdf_path.name,
-                                mime="application/pdf",
-                                key=f"download_{file_path}_{str(time.time())}"
-                            )
+                            st.session_state.compiled_pdfs.append((file_path, pdf_path))
                         else:
                             st.error(f"❌ Compilation failed for {file_path}")
                         if logs:
                             with st.expander(f"🧾 Logs for {file_path}"):
                                 st.text(logs)
+
+                    # Display download buttons for all compiled PDFs
+                    if st.session_state.compiled_pdfs:
+                        st.subheader("📥 Download Compiled PDFs")
+                        for file_path, pdf_path in st.session_state.compiled_pdfs:
+                            if pdf_path.exists():
+                                st.download_button(
+                                    label=f"Download {pdf_path.name} ({file_path})",
+                                    data=pdf_path.read_bytes(),
+                                    file_name=pdf_path.name,
+                                    mime="application/pdf",
+                                    key=f"download_{file_path}_{pdf_path.name}_{str(time.time())}"
+                                )
+                            else:
+                                st.warning(f"⚠️ PDF not found: {pdf_path}")
+
+                    # Cleanup button
+                    if st.session_state.compiled_pdfs and st.button("🧹 Clear Compiled PDFs"):
+                        with st.spinner("Cleaning up..."):
+                            if cleanup_pdfs():
+                                st.info("🧹 All PDFs cleared from compiled_latex.")
+                                st.session_state.compiled_pdfs = []
+                            else:
+                                st.warning("⚠️ Cleanup failed. Check warnings.")
 
 if not (github_repo_url and github_file_paths):
     st.info("ℹ️ Enter a GitHub URL and .tex file paths to start compiling.")
