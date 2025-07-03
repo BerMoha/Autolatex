@@ -89,9 +89,8 @@ async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[T
 
 # Streamlit UI
 st.title("📝 LaTeX Online Compiler")
-st.markdown("Compile multiple LaTeX files from a **public** GitHub repository using LaTeX.Online. "
-            "Enter file paths separated by commas. Ensure the repository is public and the default branch is 'master'. "
-            "PDFs are saved to the 'compiled_latex' directory.")
+st.markdown("Compile multiple LaTeX files, "
+            "enter file paths separated by commasand  ensure the repository is public .")
 
 # GitHub input
 st.subheader("📦 Compile from GitHub")
