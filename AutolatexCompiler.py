@@ -8,304 +8,158 @@ import time
 import pyzipper
 from github import Github, GithubException
 
-# Page configuration
+# Configuration
 st.set_page_config(page_title="📝 LaTeX Online Compiler", layout="centered")
-
-# Working directory for compiled PDFs (ephemeral in Streamlit Cloud)
 WORKING_DIR = Path("compiled_latex")
 WORKING_DIR.mkdir(exist_ok=True)
 
+# Utility Functions
 def check_repository_access(repo_url: str) -> Tuple[bool, str]:
-    """
-    Check if the GitHub repository is accessible.
-
-    Args:
-        repo_url (str): GitHub repository URL.
-
-    Returns:
-        Tuple[bool, str]: (True if accessible, message).
-    """
     if not repo_url.startswith("https://github.com/"):
         return False, "❌ Invalid GitHub URL. Must start with https://github.com/"
     try:
-        response = requests.get(f"https://api.github.com/repos/{repo_url.split('github.com/')[1]}", timeout=10)
+        repo_path = repo_url.split('github.com/')[1].rstrip('/')
+        response = requests.get(f"https://api.github.com/repos/{repo_path}", timeout=10)
         if response.status_code == 200:
             if response.json().get("private", True):
-                return False, ("❌ Source repository is private. LaTeX.Online requires public repositories. "
-                              "Make it public in GitHub: Settings → Danger Zone → Change to public.")
-            return True, "✅ Source repository is accessible."
+                return False, "❌ Repository is private. Make it public to compile."
+            return True, "✅ Repository is accessible."
         elif response.status_code == 404:
-            return False, "❌ Source repository not found. Check the URL."
-        return False, f"❌ Failed to access source repository: Status {response.status_code}"
+            return False, "❌ Repository not found."
+        return False, f"❌ Failed to access repository: Status {response.status_code}"
     except requests.RequestException as e:
-        return False, f"❌ Network error checking source repository: {str(e)}"
+        return False, f"❌ Network error: {str(e)}"
 
 async def compile_latex_from_github(repo_url: str, file_path: str, index: int) -> Tuple[Optional[Path], str]:
-    """
-    Compile a LaTeX file from a GitHub repository using LaTeX.Online.
-
-    Args:
-        repo_url (str): GitHub repository URL.
-        file_path (str): Path to the .tex file in the repository.
-        index (int): Index to ensure unique PDF names.
-
-    Returns:
-        Tuple[Optional[Path], str]: Path to PDF (or None) and compilation logs.
-    """
-    if not repo_url.startswith("https://github.com/"):
-        return None, "❌ Invalid GitHub URL. Must start with https://github.com/"
-    if not file_path.lower().endswith('.tex'):
-        return None, f"❌ File {file_path} must be a .tex file."
+    if not repo_url.startswith("https://github.com/") or not file_path.lower().endswith('.tex'):
+        return None, "❌ Invalid inputs."
 
     base_name = Path(file_path).stem.replace(' ', '_')
     temp_pdf = WORKING_DIR / f"{base_name}_{index}_{int(time.time())}.pdf"
     git_url = repo_url.rstrip('/') + '.git'
-    encoded_file_path = urllib.parse.quote(file_path)
-    api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_file_path}&command=pdflatex"
+    encoded_path = urllib.parse.quote(file_path)
+    api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_path}&command=pdflatex"
 
     try:
-        response = requests.get(api_url, headers={'Accept': 'application/pdf'}, timeout=60)
-        if response.status_code == 200 and 'application/pdf' in response.headers.get('Content-Type', ''):
+        resp = requests.get(api_url, headers={'Accept': 'application/pdf'}, timeout=60)
+        if resp.status_code == 200 and 'application/pdf' in resp.headers.get('Content-Type', ''):
             with open(temp_pdf, 'wb') as f:
-                f.write(response.content)
-            return temp_pdf, "✅ Compilation successful"
-        return None, f"❌ Compilation error for {file_path}: Status {response.status_code}\n{response.text[:200]}..."
+                f.write(resp.content)
+            return temp_pdf, "✅ Compilation successful."
+        return None, f"❌ Compilation failed: Status {resp.status_code}"
     except requests.Timeout:
-        return None, f"❌ Compilation timed out for {file_path}"
+        return None, "❌ Compilation timed out."
     except requests.RequestException as e:
-        return None, f"❌ Network error for {file_path}: {str(e)}"
+        return None, f"❌ Network error: {str(e)}"
 
 async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[Tuple[str, Optional[Path], str]]:
-    """
-    Compile multiple LaTeX files concurrently from a GitHub repository.
-
-    Args:
-        repo_url (str): GitHub repository URL.
-        file_paths (List[str]): List of .tex file paths.
-
-    Returns:
-        List[Tuple[str, Optional[Path], str]]: List of (file_path, PDF path, logs).
-    """
-    tasks = [compile_latex_from_github(repo_url, file_path, i) for i, file_path in enumerate(file_paths)]
+    tasks = [compile_latex_from_github(repo_url, path, i) for i, path in enumerate(file_paths)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    return [(file_paths[i], *results[i]) for i in range(len(file_paths))]
+    output = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            output.append((file_paths[i], None, f"❌ Error: {str(result)}"))
+        else:
+            output.append((file_paths[i], *result))
+    return output
 
-def create_password_protected_zip(pdf_paths: List[Path], zip_password: str) -> Tuple[Optional[Path], str]:
-    """
-    Create a password-protected ZIP file containing all PDFs.
-
-    Args:
-        pdf_paths (List[Path]): List of PDF file paths.
-        zip_password (str): Password for the ZIP file.
-
-    Returns:
-        Tuple[Optional[Path], str]: Path to ZIP file (or None) and message.
-    """
+def create_password_protected_zip(pdf_paths: List[Path], password: str) -> Tuple[Optional[Path], str]:
     if not pdf_paths:
         return None, "❌ No PDFs to zip."
     zip_path = WORKING_DIR / f"compiled_pdfs_{int(time.time())}.zip"
     try:
         with pyzipper.AESZipFile(zip_path, 'w', compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
-            zf.setpassword(zip_password.encode('utf-8'))
-            for pdf_path in pdf_paths:
-                zf.write(str(pdf_path), pdf_path.name)
-        return zip_path, "✅ Password-protected ZIP created successfully."
+            zf.setpassword(password.encode())
+            for pdf in pdf_paths:
+                zf.write(str(pdf), pdf.name)
+        return zip_path, "✅ ZIP created."
     except Exception as e:
-        return None, f"❌ Failed to create ZIP: {str(e)}"
+        return None, f"❌ ZIP creation error: {str(e)}"
 
-def push_to_github_repo(repo_url: str, pat: str, folder: str, pdf_paths: List[Path]) -> Tuple[bool, str]:
-    """
-    Push compiled PDFs to a folder in a GitHub repository using PyGithub.
-
-    Args:
-        repo_url (str): GitHub repository URL.
-        pat (str): Personal Access Token.
-        folder (str): Folder path in the repository (e.g., 'pdfs').
-        pdf_paths (List[Path]): List of PDF file paths to push.
-
-    Returns:
-        Tuple[bool, str]: (True if successful, message).
-    """
+def push_to_github_repo(repo_url: str, pat: str, folder: str, pdfs: List[Path]) -> Tuple[bool, str]:
     try:
         g = Github(pat)
         repo_name = repo_url.split("github.com/")[1].rstrip('.git')
         repo = g.get_repo(repo_name)
+        branch = repo.default_branch
 
         try:
             repo.get_contents(folder)
         except GithubException:
-            repo.create_file(f"{folder}/.gitkeep", "Create folder", "", branch="master")
+            repo.create_file(f"{folder}/.gitkeep", "Init folder", "", branch=branch)
 
-        for pdf_path in pdf_paths:
-            with open(pdf_path, 'rb') as f:
+        for pdf in pdfs:
+            with open(pdf, 'rb') as f:
                 content = f.read()
-            file_path = f"{folder}/{pdf_path.name}"
+            file_path = f"{folder}/{pdf.name}"
             try:
-                contents = repo.get_contents(file_path, ref="master")
-                repo.update_file(file_path, f"Update {pdf_path.name}", content, contents.sha, branch="master")
+                existing = repo.get_contents(file_path, ref=branch)
+                repo.update_file(file_path, f"Update {pdf.name}", content, existing.sha, branch=branch)
             except GithubException:
-                repo.create_file(file_path, f"Add {pdf_path.name}", content, branch="master")
-        return True, f"✅ PDFs successfully pushed to {folder} in repository."
-    except GithubException as e:
-        return False, f"❌ GitHub error: {str(e)}"
+                repo.create_file(file_path, f"Add {pdf.name}", content, branch=branch)
+
+        return True, "✅ PDFs pushed to GitHub."
     except Exception as e:
-        return False, f"❌ Error pushing to repository: {str(e)}"
+        return False, f"❌ Push failed: {str(e)}"
 
-def cleanup_files() -> bool:
-    """
-    Remove all PDF and ZIP files from the working directory.
-
-    Returns:
-        bool: True if cleanup successful.
-    """
-    success = True
-    for file in WORKING_DIR.glob("*.pdf"):
+def cleanup_files():
+    for file in WORKING_DIR.glob("*.*"):
         try:
             file.unlink()
-        except OSError as e:
-            st.warning(f"⚠️ Failed to delete {file.name}: {str(e)}")
-            success = False
-    for file in WORKING_DIR.glob("*.zip"):
-        try:
-            file.unlink()
-        except OSError as e:
-            st.warning(f"⚠️ Failed to delete {file.name}: {str(e)}")
-            success = False
-    return success
+        except Exception as e:
+            st.warning(f"⚠️ Could not delete {file.name}: {e}")
 
-# Streamlit UI
+# UI
 st.title("📝 LaTeX Online Compiler")
-st.markdown(
-    "Compile LaTeX files from a **public** GitHub repository using LaTeX.Online. "
-    "PDFs are saved to a password-protected ZIP file downloadable from this app. "
-    "Optionally push PDFs to a folder in the repository. "
-    "Note: Files are temporary due to Streamlit Cloud's ephemeral filesystem; download promptly."
-)
 
-# GitHub input
-st.subheader("📦 Compile from GitHub")
-github_repo_url = st.text_input(
-    "GitHub Repository URL",
-    placeholder="e.g., https://github.com/BerMoha/Autolatex",
-    value="https://github.com/BerMoha/Autolatex"
-)
-github_file_paths = st.text_input(
-    "Main .tex File Paths (comma-separated)",
-    placeholder="e.g., main.tex,chapter1.tex",
-    value="Fourier VS Dunkl.tex",
-    help="Enter file paths (e.g., 'Fourier VS Dunkl.tex' or 'src/Fourier VS Dunkl.tex')."
-)
+st.markdown("Compile LaTeX files from a public GitHub repository using LaTeX.Online.")
+repo_url = st.text_input("GitHub Repository", value="https://github.com/BerMoha/Autolatex")
+file_paths = st.text_input(".tex File Paths (comma-separated)", value="Fourier VS Dunkl.tex")
+password = st.text_input("ZIP Password", type="password")
+push = st.checkbox("Push to GitHub")
+folder = st.text_input("Target Folder in Repo", value="pdfs") if push else None
+pat = st.text_input("GitHub PAT", type="password") if push else None
 
-# ZIP password
-st.subheader("🔒 Password-Protected ZIP")
-zip_password = st.text_input(
-    "ZIP Password",
-    type="password",
-    help="Enter a password to protect the ZIP file containing compiled PDFs."
-)
+if repo_url:
+    accessible, message = check_repository_access(repo_url)
+    st.info(message) if accessible else st.error(message)
 
-# GitHub push options
-st.subheader("💾 Push to GitHub Folder (Optional)")
-push_to_github = st.checkbox("Push PDFs to GitHub folder")
-if push_to_github:
-    github_folder = st.text_input(
-        "GitHub Folder",
-        placeholder="e.g., pdfs",
-        value="pdfs",
-        help="Folder in the repository to store PDFs (e.g., 'pdfs')."
-    )
-    github_pat = st.text_input(
-        "GitHub Personal Access Token",
-        type="password",
-        help="Enter a PAT with 'repo' scope (GitHub → Settings → Developer settings → Personal access tokens)."
-    )
-
-# Validate repository
-if github_repo_url:
-    is_accessible, repo_message = check_repository_access(github_repo_url)
-    if is_accessible:
-        st.success(repo_message)
+if st.button("📄 Compile") and accessible:
+    tex_files = [fp.strip() for fp in file_paths.split(',') if fp.strip().endswith('.tex')]
+    if not tex_files:
+        st.error("❌ No valid .tex files provided.")
     else:
-        st.error(repo_message)
+        st.session_state.compiled_pdfs = []
+        with st.spinner("Compiling..."):
+            try:
+                results = asyncio.run(compile_multiple_files(repo_url, tex_files))
+            except RuntimeError:
+                results = asyncio.get_event_loop().run_until_complete(compile_multiple_files(repo_url, tex_files))
 
-# Compile button
-if github_repo_url and github_file_paths:
-    if st.button("📄 Compile Files"):
-        file_paths = [fp.strip() for fp in github_file_paths.split(',') if fp.strip()]
-        if not file_paths:
-            st.error("❌ No valid file paths provided.")
-        else:
-            if not is_accessible:
-                st.error(f"❌ Cannot compile: {repo_message}")
+            for file, pdf, log in results:
+                st.markdown(f"**{file}**")
+                if pdf:
+                    st.success("✅ Compiled successfully.")
+                    st.download_button(f"Download {pdf.name}", pdf.read_bytes(), pdf.name, mime="application/pdf")
+                    st.session_state.compiled_pdfs.append(pdf)
+                else:
+                    st.error(log)
+
+        if password and st.session_state.compiled_pdfs:
+            zip_path, msg = create_password_protected_zip(st.session_state.compiled_pdfs, password)
+            if zip_path:
+                st.success(msg)
+                st.download_button("Download ZIP", zip_path.read_bytes(), zip_path.name, mime="application/zip")
             else:
-                with st.spinner(f"Compiling {len(file_paths)} file(s)..."):
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    results = loop.run_until_complete(compile_multiple_files(github_repo_url, file_paths))
-                    loop.close()
+                st.error(msg)
 
-                    if "compiled_pdfs" not in st.session_state:
-                        st.session_state.compiled_pdfs = []
-                    pdf_paths = []
-                    for file_path, pdf_path, logs in results:
-                        st.markdown(f"**{file_path}**")
-                        if pdf_path and pdf_path.exists():
-                            st.success(f"✅ PDF generated: {pdf_path.name}")
-                            st.session_state.compiled_pdfs.append((file_path, pdf_path))
-                            pdf_paths.append(pdf_path)
-                        else:
-                            st.error(f"❌ Compilation failed for {file_path}")
-                        if logs:
-                            with st.expander(f"🧾 Logs for {file_path}"):
-                                st.text(logs)
+        if push and pat and st.session_state.compiled_pdfs:
+            with st.spinner("Pushing to GitHub..."):
+                success, msg = push_to_github_repo(repo_url, pat, folder, st.session_state.compiled_pdfs)
+                st.success(msg) if success else st.error(msg)
 
-                    if pdf_paths and zip_password:
-                        zip_path, zip_message = create_password_protected_zip(pdf_paths, zip_password)
-                        st.markdown("**ZIP File**")
-                        if zip_path:
-                            st.success(zip_message)
-                            st.download_button(
-                                label=f"Download {zip_path.name}",
-                                data=zip_path.read_bytes(),
-                                file_name=zip_path.name,
-                                mime="application/zip",
-                                key=f"download_zip_{zip_path.name}_{time.time()}"
-                            )
-                        else:
-                            st.error(zip_message)
-                    elif not zip_password:
-                        st.error("❌ Please enter a ZIP password.")
+        if st.button("🧹 Clean Up"):
+            cleanup_files()
+            st.session_state.compiled_pdfs = []
+            st.info("🧹 Files cleaned.")
 
-                    if st.session_state.compiled_pdfs:
-                        st.subheader("📥 Download Individual PDFs")
-                        for file_path, pdf_path in st.session_state.compiled_pdfs:
-                            if pdf_path.exists():
-                                st.download_button(
-                                    label=f"Download {pdf_path.name}",
-                                    data=pdf_path.read_bytes(),
-                                    file_name=pdf_path.name,
-                                    mime="application/pdf",
-                                    key=f"download_{file_path}_{pdf_path.name}_{time.time()}"
-                                )
-                            else:
-                                st.warning(f"⚠️ PDF not found: {pdf_path.name}")
-
-                    if push_to_github and pdf_paths and github_pat and github_folder:
-                        st.subheader("💾 Push to GitHub")
-                        with st.spinner("Pushing PDFs to GitHub..."):
-                            success, push_message = push_to_github_repo(github_repo_url, github_pat, github_folder, pdf_paths)
-                            if success:
-                                st.success(push_message)
-                            else:
-                                st.error(push_message)
-
-                    if st.session_state.compiled_pdfs and st.button("🧹 Clear Files"):
-                        with st.spinner("Cleaning up..."):
-                            if cleanup_files():
-                                st.info("🧹 All PDFs and ZIPs cleared.")
-                                st.session_state.compiled_pdfs = []
-                            else:
-                                st.warning("⚠️ Cleanup failed. Check warnings.")
-
-if not (github_repo_url and github_file_paths):
-    st.info("ℹ️ Enter a GitHub URL and .tex file paths to compile.")
