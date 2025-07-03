@@ -14,7 +14,7 @@ st.set_page_config(page_title="📝 LaTeX Online Compiler", layout="centered")
 WORKING_DIR = Path("compiled_latex")
 WORKING_DIR.mkdir(exist_ok=True)
 
-async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Optional[Path], str]:
+async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Optional[Path], str, Optional[str]]:
     """
     Compile a LaTeX file from a GitHub repository using LaTeX.Online.
 
@@ -23,13 +23,13 @@ async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Opti
         file_path (str): Path to the .tex file in the repository (e.g., main.tex).
 
     Returns:
-        Tuple[Optional[Path], str]: Path to PDF (or None) and compilation logs.
+        Tuple[Optional[Path], str, Optional[str]]: Path to PDF (or None), logs, and API URL (or None).
     """
     if not repo_url.startswith("https://github.com/"):
-        return None, "❌ Invalid GitHub URL. Must start with https://github.com/"
+        return None, "❌ Invalid GitHub URL. Must start with https://github.com/", None
 
     if not file_path.lower().endswith('.tex'):
-        return None, f"❌ File {file_path} must be a .tex file."
+        return None, f"❌ File {file_path} must be a .tex file.", None
 
     pdf_path = WORKING_DIR / f"{Path(file_path).stem}.pdf"
     git_url = repo_url.rstrip('/') + '.git'
@@ -44,22 +44,22 @@ async def compile_latex_from_github(repo_url: str, file_path: str) -> Tuple[Opti
             with open(pdf_path, 'wb') as f:
                 f.write(response.content)
             st.info(f"✅ Successfully generated PDF: {pdf_path}")
-            return pdf_path, "✅ Compilation successful"
+            return pdf_path, "✅ Compilation successful", api_url
         else:
-            # Attempt to parse error message from LaTeX.Online
+            # Parse error message
             error_msg = response.text
             try:
                 error_json = json.loads(response.text)
                 error_msg = error_json.get('message', response.text)
             except json.JSONDecodeError:
                 error_msg = response.text[:200] + "..." if len(response.text) > 200 else response.text
-            return None, f"❌ Compilation error for {file_path}: Status {response.status_code}\n{error_msg}"
+            return None, f"❌ Compilation error for {file_path}: Status {response.status_code}\n{error_msg}", api_url
     except requests.Timeout:
-        return None, f"❌ Compilation timed out for {file_path}. Check internet connection or try again."
+        return None, f"❌ Compilation timed out for {file_path}. Check internet connection or try again.", api_url
     except requests.RequestException as e:
-        return None, f"❌ Network error for {file_path}: {str(e)}"
+        return None, f"❌ Network error for {file_path}: {str(e)}", api_url
 
-async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[Tuple[str, Optional[Path], str]]:
+async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[Tuple[str, Optional[Path], str, Optional[str]]]:
     """
     Compile multiple LaTeX files concurrently from a GitHub repository.
 
@@ -68,7 +68,7 @@ async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[T
         file_paths (List[str]): List of .tex file paths.
 
     Returns:
-        List[Tuple[str, Optional[Path], str]]: List of (file_path, PDF path, logs) for each file.
+        List[Tuple[str, Optional[Path], str, Optional[str]]]: List of (file_path, PDF path, logs, API URL) for each file.
     """
     tasks = [compile_latex_from_github(repo_url, file_path) for file_path in file_paths]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -111,7 +111,7 @@ if github_repo_url and github_file_paths:
                 loop.close()
 
                 # Display results
-                for file_path, pdf_path, logs in results:
+                for file_path, pdf_path, logs, api_url in results:
                     st.markdown(f"**{file_path}**")
                     if pdf_path and pdf_path.exists():
                         st.success(f"✅ PDF generated: {pdf_path}")
@@ -127,6 +127,7 @@ if github_repo_url and github_file_paths:
                     if logs:
                         with st.expander(f"🧾 Logs for {file_path}"):
                             st.text(logs)
-                            st.markdown(f"[Test API URL directly]({urllib.parse.quote(api_url, safe=':/?=&')})")
+                            if api_url:
+                                st.markdown(f"[Test API URL directly]({api_url})")
 else:
     st.info("ℹ️ Enter a GitHub URL and .tex file paths to start compiling.")
