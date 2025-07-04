@@ -64,7 +64,7 @@ def compile_latex_from_github(repo_url: str, file_path: str, output_dir: Optiona
 st.title("📝 LaTeX Online Compiler")
 st.markdown("""
 Compile LaTeX files into PDFs directly from a GitHub repository using LaTeX.Online.
-Enter the repository URL and the path to your main `.tex` file. PDFs will be saved to the specified folder or the working directory.
+Enter the repository URL and the path to your main `.tex` file, then download your pdf. 
 """)
 
 # Input for output directory
