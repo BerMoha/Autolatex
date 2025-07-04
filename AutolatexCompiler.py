@@ -89,7 +89,7 @@ github_file_path = st.text_input(
 
 # Compile from GitHub
 if github_repo_url and github_file_path:
-    if st.button("📄 Compile from GitHub", key="compile_github"):
+    if st.button("Compile from GitHub", key="compile_github"):
         with st.spinner(f"Compiling {github_file_path} from GitHub..."):
             pdf_path, logs = compile_latex_from_github(github_repo_url, github_file_path)
             
@@ -108,9 +108,6 @@ if github_repo_url and github_file_path:
             
             if logs:
                 with st.expander("🧾 View Compilation Logs"):
-                    st.text(logs)
-else:
-    st.info("ℹ️ Enter a GitHub repository URL and file path to start compiling.")
-                    st.text(logs)
+                    st.text(logs)  # This should be indented with 16 spaces
 else:
     st.info("ℹ️ Enter a GitHub repository URL and file path to start compiling.")
