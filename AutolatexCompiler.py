@@ -1,169 +1,360 @@
 import streamlit as st
+import os
+import subprocess
+import shutil
 import requests
-import urllib.parse
+import warnings
+import time
 from pathlib import Path
 from typing import Tuple, Optional, List
-import asyncio
-import time
-import pyzipper
-from github import Github, GithubException
+import urllib.parse
 
-# Configuration
-st.set_page_config(page_title="📝 LaTeX Online Compiler", layout="centered")
+# Suppress Streamlit warnings
+warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
+
+# Page config
+st.set_page_config(page_title="📝 LaTeX Compiler", layout="centered")
+
+# Use Path for cross-platform compatibility
 WORKING_DIR = Path("compiled_latex")
 WORKING_DIR.mkdir(exist_ok=True)
 
-# Utility Functions
-def check_repository_access(repo_url: str) -> Tuple[bool, str]:
-    if not repo_url.startswith("https://github.com/"):
-        return False, "❌ Invalid GitHub URL. Must start with https://github.com/"
+def is_valid_pdflatex_path(pdflatex_path: str) -> bool:
+    """
+    Validate if the provided pdflatex path points to an executable file.
+    
+    Args:
+        pdflatex_path (str): Path to pdflatex executable.
+    
+    Returns:
+        bool: True if the path is valid and executable, False otherwise.
+    """
     try:
-        repo_path = repo_url.split('github.com/')[1].rstrip('/')
-        response = requests.get(f"https://api.github.com/repos/{repo_path}", timeout=10)
-        if response.status_code == 200:
-            if response.json().get("private", True):
-                return False, "❌ Repository is private. Make it public to compile."
-            return True, "✅ Repository is accessible."
-        elif response.status_code == 404:
-            return False, "❌ Repository not found."
-        return False, f"❌ Failed to access repository: Status {response.status_code}"
-    except requests.RequestException as e:
-        return False, f"❌ Network error: {str(e)}"
+        pdflatex_path = Path(pdflatex_path).resolve()
+        if not pdflatex_path.is_file():
+            return False
+        # Test if the path points to a valid pdflatex executable
+        result = subprocess.run(
+            [str(pdflatex_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.returncode == 0 and "pdfTeX" in result.stdout
+    except (OSError, subprocess.SubprocessError, FileNotFoundError):
+        return False
 
-async def compile_latex_from_github(repo_url: str, file_path: str, index: int) -> Tuple[Optional[Path], str]:
-    if not repo_url.startswith("https://github.com/") or not file_path.lower().endswith('.tex'):
-        return None, "❌ Invalid inputs."
-
-    base_name = Path(file_path).stem.replace(' ', '_')
-    temp_pdf = WORKING_DIR / f"{base_name}_{index}_{int(time.time())}.pdf"
-    git_url = repo_url.rstrip('/') + '.git'
-    encoded_path = urllib.parse.quote(file_path)
-    api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_path}&command=pdflatex"
-
+def has_latex_preamble(filepath: Path) -> bool:
+    """
+    Check if file contains LaTeX preamble.
+    """
     try:
-        resp = requests.get(api_url, headers={'Accept': 'application/pdf'}, timeout=60)
-        if resp.status_code == 200 and 'application/pdf' in resp.headers.get('Content-Type', ''):
-            with open(temp_pdf, 'wb') as f:
-                f.write(resp.content)
-            return temp_pdf, "✅ Compilation successful."
-        return None, f"❌ Compilation failed: Status {resp.status_code}"
-    except requests.Timeout:
-        return None, "❌ Compilation timed out."
-    except requests.RequestException as e:
-        return None, f"❌ Network error: {str(e)}"
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return any('\\documentclass' in line for line in f)
+    except (IOError, UnicodeDecodeError):
+        return False
 
-async def compile_multiple_files(repo_url: str, file_paths: List[str]) -> List[Tuple[str, Optional[Path], str]]:
-    tasks = [compile_latex_from_github(repo_url, path, i) for i, path in enumerate(file_paths)]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    output = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            output.append((file_paths[i], None, f"❌ Error: {str(result)}"))
-        else:
-            output.append((file_paths[i], *result))
-    return output
-
-def create_password_protected_zip(pdf_paths: List[Path], password: str) -> Tuple[Optional[Path], str]:
-    if not pdf_paths:
-        return None, "❌ No PDFs to zip."
-    zip_path = WORKING_DIR / f"compiled_pdfs_{int(time.time())}.zip"
-    try:
-        with pyzipper.AESZipFile(zip_path, 'w', compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as zf:
-            zf.setpassword(password.encode())
-            for pdf in pdf_paths:
-                zf.write(str(pdf), pdf.name)
-        return zip_path, "✅ ZIP created."
-    except Exception as e:
-        return None, f"❌ ZIP creation error: {str(e)}"
-
-def push_to_github_repo(repo_url: str, pat: str, folder: str, pdfs: List[Path]) -> Tuple[bool, str]:
-    try:
-        g = Github(pat)
-        repo_name = repo_url.split("github.com/")[1].rstrip('.git')
-        repo = g.get_repo(repo_name)
-        branch = repo.default_branch
-
+def compile_latex_file(filename: str, output_dir: Optional[Path] = None, pdflatex_path: Optional[str] = None) -> Tuple[Optional[Path], str]:
+    """
+    Compile LaTeX file to PDF using local pdflatex and save PDF to the specified output directory.
+    
+    Args:
+        filename (str): Name of the file to compile.
+        output_dir (Optional[Path]): Directory to save the PDF (defaults to WORKING_DIR).
+        pdflatex_path (Optional[str]): Path to pdflatex executable (if provided).
+    
+    Returns:
+        Tuple[Optional[Path], str]: Path to generated PDF (or None) and compilation logs.
+    """
+    input_path = WORKING_DIR / filename
+    
+    # Validate file type and convert if needed
+    if filename.lower().endswith('.txt'):
+        if not has_latex_preamble(input_path):
+            return None, f"⏩ Skipped: {filename} (no LaTeX preamble detected)"
+        tex_name = filename.replace('.txt', '.tex')
+        tex_path = WORKING_DIR / tex_name
         try:
-            repo.get_contents(folder)
-        except GithubException:
-            repo.create_file(f"{folder}/.gitkeep", "Init folder", "", branch=branch)
+            input_path.rename(tex_path)
+            input_path = tex_path
+        except OSError as e:
+            return None, f"❌ Failed to rename {filename}: {str(e)}"
 
-        for pdf in pdfs:
-            with open(pdf, 'rb') as f:
-                content = f.read()
-            file_path = f"{folder}/{pdf.name}"
-            try:
-                existing = repo.get_contents(file_path, ref=branch)
-                repo.update_file(file_path, f"Update {pdf.name}", content, existing.sha, branch=branch)
-            except GithubException:
-                repo.create_file(file_path, f"Add {pdf.name}", content, branch=branch)
+    # Compile in WORKING_DIR
+    temp_pdf = WORKING_DIR / f"{input_path.stem}.pdf"
 
-        return True, "✅ PDFs pushed to GitHub."
-    except Exception as e:
-        return False, f"❌ Push failed: {str(e)}"
-
-def cleanup_files():
-    for file in WORKING_DIR.glob("*.*"):
-        try:
-            file.unlink()
-        except Exception as e:
-            st.warning(f"⚠️ Could not delete {file.name}: {e}")
-
-# UI
-st.title("📝 LaTeX Online Compiler")
-
-st.markdown("Compile LaTeX files from a public GitHub repository using LaTeX.Online. Requires internet connection.")
-
-if not st.connection("internet", type="http"):
-    st.error("❌ This app requires an internet connection to work.")
-    st.stop()
-
-repo_url = st.text_input("GitHub Repository", value="https://github.com/BerMoha/Autolatex")
-file_paths = st.text_input(".tex File Paths (comma-separated)", value="Fourier VS Dunkl.tex")
-password = st.text_input("ZIP Password", type="password")
-push = st.checkbox("Push to GitHub")
-folder = st.text_input("Target Folder in Repo", value="pdfs") if push else None
-pat = st.text_input("GitHub PAT", type="password") if push else None
-
-if repo_url:
-    accessible, message = check_repository_access(repo_url)
-    st.info(message) if accessible else st.error(message)
-
-if st.button("📄 Compile") and accessible:
-    tex_files = [fp.strip() for fp in file_paths.split(',') if fp.strip().endswith('.tex')]
-    if not tex_files:
-        st.error("❌ No valid .tex files provided.")
+    # Determine pdflatex executable
+    if pdflatex_path and is_valid_pdflatex_path(pdflatex_path):
+        pdflatex_cmd = str(pdflatex_path)
     else:
-        st.session_state.compiled_pdfs = []
-        with st.spinner("Compiling..."):
-            try:
-                results = asyncio.run(compile_multiple_files(repo_url, tex_files))
-            except RuntimeError:
-                results = asyncio.get_event_loop().run_until_complete(compile_multiple_files(repo_url, tex_files))
+        pdflatex_cmd = shutil.which("pdflatex")
+        if not pdflatex_cmd:
+            return None, "❌ pdflatex not found. Please provide a valid pdflatex path or ensure it is in your system PATH."
 
-            for file, pdf, log in results:
-                st.markdown(f"**{file}**")
-                if pdf:
-                    st.success("✅ Compiled successfully.")
-                    st.download_button(f"Download {pdf.name}", pdf.read_bytes(), pdf.name, mime="application/pdf")
-                    st.session_state.compiled_pdfs.append(pdf)
+    try:
+        # Run pdflatex with timeout
+        result = subprocess.run(
+            [
+                pdflatex_cmd,
+                "-interaction=nonstopmode",
+                "-halt-on-error",
+                f"-output-directory={WORKING_DIR}",
+                str(input_path)
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60
+        )
+        # Verify PDF was generated
+        if temp_pdf.exists():
+            # Move PDF to output_dir if specified, else keep in WORKING_DIR
+            if output_dir and output_dir.is_dir():
+                final_pdf = output_dir / f"{input_path.stem}.pdf"
+                try:
+                    shutil.move(str(temp_pdf), str(final_pdf))
+                    return final_pdf, result.stdout
+                except OSError as e:
+                    st.warning(f"⚠️ Failed to move PDF to {output_dir}: {str(e)}. Keeping in {WORKING_DIR}")
+                    return temp_pdf, result.stdout
+            return temp_pdf, result.stdout
+        else:
+            return None, f"❌ PDF not generated for {filename}"
+    except subprocess.TimeoutExpired:
+        return None, f"❌ Compilation timed out for {filename}"
+    except subprocess.CalledProcessError as e:
+        return None, f"❌ Compilation error for {filename}:\n{e.stdout}\n{e.stderr}"
+
+def cleanup_auxiliary_files(filenames: List[str]) -> bool:
+    """
+    Remove auxiliary LaTeX files generated by the specified files from WORKING_DIR.
+    """
+    auxiliary_extensions = {".aux", ".log", ".out", ".toc", ".synctex.gz", ".nav", ".snm", ".tex"}
+    success = True
+    
+    for filename in filenames:
+        base_name = Path(filename).stem
+        for ext in auxiliary_extensions:
+            aux_file = WORKING_DIR / f"{base_name}{ext}"
+            if aux_file.is_file():
+                for _ in range(3):  # Retry up to 3 times
+                    try:
+                        aux_file.unlink()
+                        break
+                    except OSError as e:
+                        st.warning(f"⚠️ Attempting to delete {aux_file.name}: {str(e)}")
+                        success = False
+                        time.sleep(0.5)  # Wait before retrying
                 else:
-                    st.error(log)
+                    st.error(f"❌ Failed to delete {aux_file.name} after retries")
+                    success = False
+    
+    return success
 
-        if password and st.session_state.compiled_pdfs:
-            zip_path, msg = create_password_protected_zip(st.session_state.compiled_pdfs, password)
-            if zip_path:
-                st.success(msg)
-                st.download_button("Download ZIP", zip_path.read_bytes(), zip_path.name, mime="application/zip")
+def compile_latex_from_github(repo_url: str, file_path: str, output_dir: Optional[Path] = None) -> Tuple[Optional[Path], str]:
+    """
+    Compile LaTeX file from a GitHub repository using LaTeX.Online's Git endpoint.
+    """
+    if not repo_url.startswith("https://github.com/"):
+        return None, "❌ Invalid GitHub repository URL. Must start with https://github.com/"
+    if not file_path.lower().endswith('.tex'):
+        return None, "❌ File path must point to a .tex file"
+
+    temp_pdf = WORKING_DIR / f"{Path(file_path).stem}.pdf"
+    git_url = repo_url.rstrip('/') + '.git'
+    encoded_file_path = urllib.parse.quote(file_path)
+    api_url = f"https://latexonline.cc/compile?git={git_url}&target={encoded_file_path}&command=pdflatex"
+
+    headers = {'Accept': 'application/pdf'}
+    try:
+        response = requests.get(api_url, headers=headers, timeout=60)
+        if response.status_code == 200 and 'application/pdf' in response.headers.get('Content-Type', ''):
+            with open(temp_pdf, 'wb') as f:
+                f.write(response.content)
+            if output_dir and output_dir.is_dir():
+                final_pdf = output_dir / f"{Path(file_path).stem}.pdf"
+                try:
+                    temp_pdf.rename(final_pdf)
+                    return final_pdf, "✅ Compilation successful"
+                except OSError as e:
+                    st.warning(f"⚠️ Failed to move PDF to {output_dir}: {str(e)}. Keeping in {WORKING_DIR}")
+                    return temp_pdf, "✅ Compilation successful"
+            return temp_pdf, "✅ Compilation successful"
+        else:
+            return None, f"❌ Compilation error for {file_path}:\nStatus: {response.status_code}\n{response.text}"
+    except requests.Timeout:
+        return None, f"❌ Compilation timed out for {file_path}"
+    except requests.RequestException as e:
+        return None, f"❌ Network error for {file_path}: {str(e)}"
+
+# Streamlit UI
+st.title("📝 LaTeX Compiler")
+st.markdown("""
+Compile LaTeX files into PDFs. Upload local `.tex` or `.txt` files to compile using local pdflatex, or provide a GitHub repository URL to compile using LaTeX.Online.
+PDFs will be saved to the specified folder or the working directory.
+""")
+
+# Input for pdflatex path
+st.subheader("⚙️ Configuration")
+pdflatex_path = st.text_input(
+    "pdflatex Path (optional)",
+    placeholder="e.g., C:/Program Files/MiKTeX/bin/x64/pdflatex.exe",
+    help="Enter the full path to the pdflatex executable. Leave blank to use pdflatex from your system PATH."
+)
+
+# Validate pdflatex path if provided
+if pdflatex_path:
+    if is_valid_pdflatex_path(pdflatex_path):
+        st.success("✅ Valid pdflatex path provided.")
+    else:
+        st.error("❌ Invalid pdflatex path. Please check the path or leave blank to use system PATH.")
+
+# Input for output directory
+output_dir_input = st.text_input(
+    "Output Directory for PDFs (leave blank to use working directory)",
+    placeholder="e.g., C:/Users/YourName/Documents or /home/user/docs",
+    help="Enter the folder where your .tex/.txt files are located to save PDFs there."
+)
+
+# Validate output directory
+output_dir = None
+if output_dir_input:
+    try:
+        output_dir = Path(output_dir_input).resolve()
+        if not output_dir.is_dir():
+            st.error(f"❌ Invalid directory: {output_dir_input}. Using working directory instead.")
+            output_dir = None
+    except OSError as e:
+        st.error(f"❌ Error accessing directory {output_dir_input}: {str(e)}. Using working directory instead.")
+        output_dir = None
+
+# GitHub repository input
+st.subheader("📦 Compile from GitHub")
+github_repo_url = st.text_input(
+    "GitHub Repository URL",
+    placeholder="e.g., https://github.com/username/repo",
+    help="Enter the GitHub repository URL containing your LaTeX project."
+)
+github_file_path = st.text_input(
+    "Main .tex File Path",
+    placeholder="e.g., path/to/Fourier VS Dunkl.tex",
+    help="Enter the path to the main .tex file in the repository."
+)
+
+# Compile from GitHub
+if github_repo_url and github_file_path:
+    if st.button("📄 Compile from GitHub", key="compile_github"):
+        with st.spinner(f"Compiling {github_file_path} from GitHub..."):
+            pdf_path, logs = compile_latex_from_github(github_repo_url, github_file_path, output_dir)
+            
+            if pdf_path and pdf_path.exists():
+                st.success(f"✅ PDF generated: {pdf_path}")
+                st.download_button(
+                    label=f"📥 Download {pdf_path.name}",
+                    data=pdf_path.read_bytes(),
+                    file_name=pdf_path.name,
+                    mime="application/pdf",
+                    key=f"download_github_{pdf_path.name}_{str(pdf_path.stat().st_mtime)}"
+                )
             else:
-                st.error(msg)
+                st.error("❌ Compilation failed.")
+            
+            if logs:
+                with st.expander("🧾 View Compilation Logs"):
+                    st.text(logs)
 
-        if push and pat and st.session_state.compiled_pdfs:
-            with st.spinner("Pushing to GitHub..."):
-                success, msg = push_to_github_repo(repo_url, pat, folder, st.session_state.compiled_pdfs)
-                st.success(msg) if success else st.error(msg)
+# File uploader with size limit
+st.subheader("📤 Upload Local Files")
+uploaded_files = st.file_uploader(
+    "Drop your files here:",
+    type=["tex", "txt"],
+    accept_multiple_files=True,
+    help="Maximum file size: 10MB"
+)
 
-        if st.button("🧹 Clean Up"):
-            cleanup_files()
-            st.session_state.compiled_pdfs = []
-            st.info("🧹 Files cleaned.")
+# Store uploaded file names
+if "uploaded_filenames" not in st.session_state:
+    st.session_state.uploaded_filenames = []
+
+if uploaded_files:
+    st.session_state.uploaded_filenames = []  # Reset for new uploads
+    compiled_files = []
+    for file in uploaded_files:
+        if file.size > 10_000_000:  # 10MB limit
+            st.error(f"❌ {file.name} exceeds 10MB limit")
+            continue
+        file_path = WORKING_DIR / file.name
+        try:
+            file_path.write_bytes(file.getbuffer())
+            st.session_state.uploaded_filenames.append(file.name)
+            compiled_files.append(file.name)
+        except OSError as e:
+            st.error(f"❌ Failed to save {file.name}: {str(e)}")
+            continue
+    if st.session_state.uploaded_filenames:
+        st.success(f"✅ {len(st.session_state.uploaded_filenames)} file(s) uploaded successfully.")
+    else:
+        st.warning("⚠️ No files were uploaded successfully.")
+
+# Display uploaded files and PDFs
+if st.session_state.uploaded_filenames:
+    st.subheader("📂 Uploaded Files")
+    compiled_files = []
+    
+    for filename in sorted(st.session_state.uploaded_filenames):
+        file_path = WORKING_DIR / filename
+        pdf_dir = output_dir if output_dir else WORKING_DIR
+        pdf_path = pdf_dir / f"{Path(filename).stem}.pdf"
+        
+        st.markdown(f"**{filename}**")
+        
+        # Check for existing PDF
+        if pdf_path.exists():
+            st.success(f"✅ PDF found: {pdf_path}")
+            st.download_button(
+                label=f"📥 Download {pdf_path.name}",
+                data=pdf_path.read_bytes(),
+                file_name=pdf_path.name,
+                mime="application/pdf",
+                key=f"download_{filename}_{str(pdf_path.stat().st_mtime)}"
+            )
+        else:
+            st.info(f"ℹ️ No PDF found for {filename}. Compile to generate one.")
+        
+        # Compile option
+        if st.button(f"📄 Compile {filename}", key=f"compile_{filename}"):
+            if not pdflatex_path and not shutil.which("pdflatex"):
+                st.error("❌ pdflatex not found. Please provide a valid pdflatex path or ensure it is in your system PATH.")
+            elif not file_path.exists():
+                st.error(f"❌ File {filename} not found in working directory.")
+            else:
+                with st.spinner(f"Compiling {filename}..."):
+                    pdf_path, logs = compile_latex_file(filename, output_dir, pdflatex_path)
+                    
+                    if pdf_path and pdf_path.exists():
+                        st.success(f"✅ PDF generated: {pdf_path}")
+                        st.download_button(
+                            label=f"📥 Download {pdf_path.name}",
+                            data=pdf_path.read_bytes(),
+                            file_name=pdf_path.name,
+                            mime="application/pdf",
+                            key=f"download_new_{filename}_{str(pdf_path.stat().st_mtime)}"
+                        )
+                        compiled_files.append(filename)
+                    else:
+                        st.error("❌ Compilation failed.")
+                    
+                    if logs:
+                        with st.expander("🧾 View Compilation Logs"):
+                            st.text(logs)
+    
+    # Cleanup option
+    if compiled_files:
+        if st.button("🧹 Clean Up Auxiliary Files", key="cleanup_button"):
+            with st.spinner("Cleaning up auxiliary files..."):
+                if cleanup_auxiliary_files(compiled_files):
+                    st.info("🧹 Cleanup of auxiliary files completed successfully.")
+                else:
+                    st.warning("⚠️ Cleanup completed with some errors. Check warnings above.")
+else:
+    st.info("ℹ️ Upload files or enter a GitHub repository to start compiling.")
